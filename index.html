@@ -59,9 +59,7 @@
           <li>Dig direction is angled/randomized (not straight down-only).</li>
           <li>About 1 in 10 ants self-elects as a room-builder near active tunnels.</li>
           <li>Surface texture variation is capped to a maximum 3px height difference.</li>
-          <li>Tunnels are capped around 2–3px wide to prevent runaway widening.</li>
           <li>After removing 10 soil pixels, an ant returns to the surface, deposits one soil pixel, then walks sideways away from the hole.</li>
-          <li>Tunnel and room corridors bias toward 2–3 pixel width via frontier selection.</li>
         </ul>
       </div>
       <div class="meta" id="meta">Starting simulation…</div>
@@ -78,7 +76,6 @@
       const DOWNWARD_DIG_BONUS = 2.8;
       const DIAGONAL_DIG_BONUS = 2.2;
       const STRAIGHT_DOWN_PENALTY = 2.4;
-      const MAX_TUNNEL_NEIGHBOR_EMPTY = 3;
       const SOIL_CARRY_LIMIT = 10;
       const SPEEDS = { play: 1, fast: 10, veryFast: 100, veryVeryFast: 1000 };
 
@@ -171,11 +168,8 @@
         }
       }
 
-      function digOnePixel(x, y, options = {}) {
-        const { allowWide = false } = options;
+      function digOnePixel(x, y) {
         if (!isSoil(x, y)) return false;
-        const support = countEmptyNeighbors(x, y);
-        if (!allowWide && support > MAX_TUNNEL_NEIGHBOR_EMPTY) return false;
         cells[idx(x, y)] = 1;
         return true;
       }
@@ -221,8 +215,8 @@
         if (anchorY < SURFACE_BAND + 14) return;
         if (Math.random() > 0.05) return;
 
-        const roomW = 10 + Math.floor(Math.random() * 6); // 10..15
-        const roomH = 5 + Math.floor(Math.random() * 6); // 5..10
+        const roomW = 8 + Math.floor(Math.random() * 18);
+        const roomH = 4 + Math.floor(Math.random() * 14);
         const cx = anchorX + Math.floor((Math.random() - 0.5) * 10);
         const cy = anchorY + 5 + Math.floor(Math.random() * 8);
         if (!inBounds(cx, cy)) return;
@@ -240,16 +234,6 @@
         });
       }
 
-      function widthPreferenceScore(nx, ny) {
-        // Encourage corridor/room frontiers around 2-3px thickness.
-        const support = countEmptyNeighbors(nx, ny);
-        if (support === 2) return 3.2;
-        if (support === 3) return 2.8;
-        if (support === 1) return 1.2;
-        if (support >= 4) return 0.3;
-        return 0;
-      }
-
       function roomFrontierDigCandidates(x, y) {
         const candidates = [];
         for (const [nx, ny] of neighbors8(x, y)) {
@@ -259,7 +243,7 @@
             if (roomPlans[i].pending.has(k)) {
               const dx = nx - x;
               const dy = ny - y;
-              let score = widthPreferenceScore(nx, ny);
+              let score = countEmptyNeighbors(nx, ny) * 0.4;
               if (dy > 0) score += DOWNWARD_DIG_BONUS;
               if (dy > 0 && dx !== 0) score += DIAGONAL_DIG_BONUS;
               if (dy > 0 && dx === 0) score -= STRAIGHT_DOWN_PENALTY;
@@ -278,7 +262,7 @@
           // Prefer continuing at existing tunnel fronts and digging downward.
           const support = countEmptyNeighbors(nx, ny);
           if (support < 1) continue;
-          let score = widthPreferenceScore(nx, ny) + support * 0.3;
+          let score = support * 0.7;
           const dx = nx - x;
           const dy = ny - y;
           if (dy > 0) score += DOWNWARD_DIG_BONUS;
@@ -430,7 +414,7 @@
           const top = roomCandidates.slice(0, Math.min(2, roomCandidates.length));
           const pick = top[Math.floor(Math.random() * top.length)];
           const [dx, dy, roomIndex] = pick;
-          if (digOnePixel(dx, dy, { allowWide: true })) {
+          if (digOnePixel(dx, dy)) {
             roomPlans[roomIndex].pending.delete(key(dx, dy));
             ant.carriedSoil += 1;
           }
