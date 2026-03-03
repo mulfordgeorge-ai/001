@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Realtime Ant Formicarium</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #111;
+        color: #ddd;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      }
+
+      .panel {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.75rem;
+      }
+
+      canvas {
+        image-rendering: pixelated;
+        width: 800px;
+        height: 600px;
+        border: 1px solid #666;
+        background: #e0e0e0;
+      }
+
+      .meta {
+        opacity: 0.85;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="panel">
+      <h1>Realtime Ant Formicarium (400×300)</h1>
+      <canvas id="world" width="400" height="300"></canvas>
+      <div class="meta" id="meta">Starting simulation…</div>
+    </div>
+
+    <script>
+      const WIDTH = 400;
+      const HEIGHT = 300;
+      const ANT_COUNT = 320;
+      const STEP_PER_FRAME = 1;
+
+      // Exactly 4 grayscale colors.
+      const COLORS = {
+        rock: [224, 224, 224, 255],
+        compacted: [160, 160, 160, 255],
+        tunnel: [96, 96, 96, 255],
+        ant: [32, 32, 32, 255],
+      };
+
+      const canvas = document.getElementById("world");
+      const meta = document.getElementById("meta");
+      const ctx = canvas.getContext("2d", { alpha: false });
+      const image = ctx.createImageData(WIDTH, HEIGHT);
+      const cells = new Uint8Array(WIDTH * HEIGHT); // 0 rock, 1 compacted, 2 tunnel
+      const ants = [];
+
+      const idx = (x, y) => y * WIDTH + x;
+      const inBounds = (x, y) => x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT;
+
+      function setPixel(i, rgba) {
+        image.data[i] = rgba[0];
+        image.data[i + 1] = rgba[1];
+        image.data[i + 2] = rgba[2];
+        image.data[i + 3] = rgba[3];
+      }
+
+      function drawTerrain() {
+        for (let y = 0; y < HEIGHT; y++) {
+          for (let x = 0; x < WIDTH; x++) {
+            const c = cells[idx(x, y)];
+            const p = idx(x, y) * 4;
+            setPixel(
+              p,
+              c === 2 ? COLORS.tunnel : c === 1 ? COLORS.compacted : COLORS.rock,
+            );
+          }
+        }
+      }
+
+      function drawAnts() {
+        for (const ant of ants) {
+          const p = idx(ant.x, ant.y) * 4;
+          setPixel(p, COLORS.ant);
+        }
+      }
+
+      function dig(x, y) {
+        if (!inBounds(x, y)) return;
+        const i = idx(x, y);
+        if (cells[i] === 0) {
+          cells[i] = 1; // compacted first
+        } else {
+          cells[i] = 2; // then tunnel
+        }
+      }
+
+      function weightedStep(ant) {
+        const dirs = [
+          [0, 1, 8],
+          [1, 0, 2],
+          [-1, 0, 2],
+          [0, -1, 1],
+        ];
+
+        let total = 0;
+        for (const [, , w] of dirs) total += w;
+        let r = Math.random() * total;
+        for (const [dx, dy, w] of dirs) {
+          if ((r -= w) <= 0) {
+            ant.vx = dx;
+            ant.vy = dy;
+            break;
+          }
+        }
+      }
+
+      function updateAnt(ant) {
+        // Randomly choose a new direction with some persistence.
+        if (Math.random() < 0.16) weightedStep(ant);
+
+        let nx = ant.x + ant.vx;
+        let ny = ant.y + ant.vy;
+
+        if (!inBounds(nx, ny)) {
+          ant.vx *= -1;
+          ant.vy *= -1;
+          nx = ant.x + ant.vx;
+          ny = ant.y + ant.vy;
+        }
+
+        ant.x = Math.max(0, Math.min(WIDTH - 1, nx));
+        ant.y = Math.max(0, Math.min(HEIGHT - 1, ny));
+
+        dig(ant.x, ant.y);
+        // Make tunnels a little thicker.
+        if (Math.random() < 0.3) dig(ant.x + 1, ant.y);
+        if (Math.random() < 0.3) dig(ant.x - 1, ant.y);
+      }
+
+      function seedAnts() {
+        const sx = Math.floor(WIDTH / 2);
+        const sy = 6;
+        for (let i = 0; i < ANT_COUNT; i++) {
+          ants.push({
+            x: sx + Math.floor((Math.random() - 0.5) * 12),
+            y: sy + Math.floor(Math.random() * 4),
+            vx: 0,
+            vy: 1,
+          });
+        }
+      }
+
+      let frame = 0;
+      function tick() {
+        frame++;
+
+        for (let i = 0; i < ants.length; i++) {
+          for (let s = 0; s < STEP_PER_FRAME; s++) updateAnt(ants[i]);
+        }
+
+        drawTerrain();
+        drawAnts();
+        ctx.putImageData(image, 0, 0);
+
+        const tunneled = cells.reduce((n, c) => n + (c === 2 ? 1 : 0), 0);
+        meta.textContent = `frame=${frame} ants=${ants.length} tunneled=${tunneled}`;
+
+        requestAnimationFrame(tick);
+      }
+
+      seedAnts();
+      tick();
+    </script>
+  </body>
+</html>
