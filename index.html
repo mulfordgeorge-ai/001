@@ -53,6 +53,8 @@
       const DIG_INTERVAL_MS = 360; // Global dig speed.
       const SURFACE_BAND = 20;
       const ROOM_SPACING_SOFT_MIN = 15;
+      const DOWNWARD_MOVE_BONUS = 4.5;
+      const DOWNWARD_DIG_BONUS = 3.5;
 
       const COLORS = {
         soil: [96, 96, 96, 255],
@@ -167,13 +169,13 @@
       }
 
       function maybeAddRoomPlan(anchorX, anchorY) {
-        if (anchorY < SURFACE_BAND + 12) return;
+        if (anchorY < SURFACE_BAND + 14) return;
         if (Math.random() > 0.05) return;
 
         const roomW = 10 + Math.floor(Math.random() * 6); // 10..15
         const roomH = 5 + Math.floor(Math.random() * 6); // 5..10
-        const cx = anchorX + Math.floor((Math.random() - 0.5) * 12);
-        const cy = anchorY + Math.floor((Math.random() - 0.5) * 8);
+        const cx = anchorX + Math.floor((Math.random() - 0.5) * 10);
+        const cy = anchorY + 5 + Math.floor(Math.random() * 8);
         if (!inBounds(cx, cy)) return;
 
         let minDist = Infinity;
@@ -208,9 +210,13 @@
         const candidates = [];
         for (const [nx, ny] of neighbors4(x, y)) {
           if (!isSoil(nx, ny)) continue;
-          // Prefer continuing at existing tunnel fronts.
+          // Prefer continuing at existing tunnel fronts and digging downward.
           const support = countEmptyNeighbors(nx, ny);
-          if (support >= 1) candidates.push([nx, ny, support]);
+          if (support < 1) continue;
+          let score = support;
+          if (ny > y) score += DOWNWARD_DIG_BONUS;
+          if (ny <= y) score -= 0.8;
+          candidates.push([nx, ny, score]);
         }
         return candidates;
       }
@@ -219,12 +225,14 @@
         const moves = neighbors4(ant.x, ant.y).filter(([nx, ny]) => isEmpty(nx, ny));
         if (moves.length === 0) return null;
 
-        // Prefer existing trunk tunnels and active dig zones.
+        // Prefer shared tunnels, active dig zones, and moving deeper underground.
         let best = moves[0];
         let bestScore = -Infinity;
         for (const [nx, ny] of moves) {
           let score = countEmptyNeighbors(nx, ny) * 2;
-          if (ny > ant.y) score += 1.5; // slight downward preference.
+          if (ny > ant.y) score += DOWNWARD_MOVE_BONUS;
+          if (ny < ant.y) score -= 1.2;
+          if (ant.y < SURFACE_BAND + 50 && ny > ant.y) score += 2.2;
           if (Math.abs(nx - WIDTH / 2) < 18) score += 0.4;
           if (roomFrontierDigCandidates(nx, ny).length > 0) score += 3;
           score += Math.random() * 0.8;
