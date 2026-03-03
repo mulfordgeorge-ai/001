@@ -31,7 +31,7 @@
         width: 800px;
         height: 600px;
         border: 1px solid #666;
-        background: #e0e0e0;
+        background: #fff;
       }
 
       .meta {
@@ -50,9 +50,9 @@
       const WIDTH = 400;
       const HEIGHT = 300;
       const ANT_COUNT = 1;
-      const STEP_INTERVAL_MS = 180;
+      const STEP_INTERVAL_MS = 360;
+      const SURFACE_BAND = 20;
 
-      // Exactly 4 grayscale colors.
       const COLORS = {
         soil: [96, 96, 96, 255],
         empty: [255, 255, 255, 255],
@@ -93,42 +93,41 @@
         }
       }
 
-      function dig(x, y) {
-        if (!inBounds(x, y)) return;
-        const i = idx(x, y);
-        cells[i] = 1;
-      }
-
-      function weightedStep(ant) {
-        const dirs = [
-          [0, 1, 8],
-          [1, 0, 2],
-          [-1, 0, 2],
-          [0, -1, 1],
-        ];
-
-        let total = 0;
-        for (const [, , w] of dirs) total += w;
-        let r = Math.random() * total;
-        for (const [dx, dy, w] of dirs) {
-          if ((r -= w) <= 0) {
-            ant.vx = dx;
-            ant.vy = dy;
-            break;
+      function buildSurfaceBand() {
+        for (let x = 0; x < WIDTH; x++) {
+          const roughness = Math.floor((Math.random() - 0.5) * 8); // -4..+3
+          const depth = Math.max(14, Math.min(26, SURFACE_BAND + roughness));
+          for (let y = 0; y < depth; y++) {
+            cells[idx(x, y)] = 1;
           }
         }
       }
 
+      function dig(x, y) {
+        if (!inBounds(x, y)) return;
+        cells[idx(x, y)] = 1;
+      }
+
+      function weightedStep(ant) {
+        const dirs = [
+          [0, 1],
+          [1, 0],
+          [-1, 0],
+          [0, -1],
+        ];
+        const pick = dirs[Math.floor(Math.random() * dirs.length)];
+        ant.vx = pick[0];
+        ant.vy = pick[1];
+      }
+
       function updateAnt(ant) {
-        // Randomly choose a new direction with some persistence.
-        if (Math.random() < 0.16) weightedStep(ant);
+        if (Math.random() < 0.3) weightedStep(ant);
 
         let nx = ant.x + ant.vx;
         let ny = ant.y + ant.vy;
 
         if (!inBounds(nx, ny)) {
-          ant.vx *= -1;
-          ant.vy *= -1;
+          weightedStep(ant);
           nx = ant.x + ant.vx;
           ny = ant.y + ant.vy;
         }
@@ -137,18 +136,15 @@
         ant.y = Math.max(0, Math.min(HEIGHT - 1, ny));
 
         dig(ant.x, ant.y);
-        // Make tunnels a little thicker.
-        if (Math.random() < 0.3) dig(ant.x + 1, ant.y);
-        if (Math.random() < 0.3) dig(ant.x - 1, ant.y);
       }
 
       function seedAnts() {
         const sx = Math.floor(WIDTH / 2);
-        const sy = 6;
+        const sy = SURFACE_BAND + 2;
         for (let i = 0; i < ANT_COUNT; i++) {
           ants.push({
-            x: sx + Math.floor((Math.random() - 0.5) * 12),
-            y: sy + Math.floor(Math.random() * 4),
+            x: sx,
+            y: sy,
             vx: 0,
             vy: 1,
           });
@@ -177,6 +173,7 @@
         requestAnimationFrame(tick);
       }
 
+      buildSurfaceBand();
       seedAnts();
       tick();
     </script>
