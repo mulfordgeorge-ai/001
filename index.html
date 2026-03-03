@@ -54,7 +54,6 @@
           <li>Ants remove only 1 adjacent soil pixel per dig step.</li>
           <li>Multiple ants may occupy the same pixel.</li>
           <li>Surface texture variation is capped to a maximum 3px height difference.</li>
-          <li>After removing 10 soil pixels, an ant returns to the surface, deposits one soil pixel, then walks sideways away from the hole.</li>
         </ul>
       </div>
       <div class="meta" id="meta">Starting simulation…</div>
@@ -66,7 +65,6 @@
       const DIG_INTERVAL_MS = 360; // Global dig speed.
       const SURFACE_BAND = 20;
       const ROOM_SPACING_SOFT_MIN = 15;
-      const SOIL_CARRY_LIMIT = 10;
       const SPEEDS = { play: 1, fast: 10, veryFast: 100, veryVeryFast: 1000 };
 
       const COLORS = {
@@ -334,78 +332,121 @@
         return null;
       }
 
-      function pruneCompletedRooms() {
-        for (let i = roomPlans.length - 1; i >= 0; i--) {
-          if (roomPlans[i].pending.size === 0) roomPlans.splice(i, 1);
+      function buildMainChamberPixels(cx, cy) {
+        const pending = new Set();
+        const half = 5; // ~10x10 chamber
+        for (let y = cy - half - 1; y <= cy + half + 1; y++) {
+          for (let x = cx - half - 1; x <= cx + half + 1; x++) {
+            if (!inBounds(x, y)) continue;
+            const nx = (x - cx) / half;
+            const ny = (y - cy) / half;
+            const dist = nx * nx + ny * ny;
+            const jitter = (Math.random() - 0.5) * 0.35;
+            if (dist <= 1 + jitter) pending.add(key(x, y));
+          }
         }
+        return pending;
+      }
+
+      function nearestPendingPixel(ant) {
+        let best = null;
+        let bestD = Infinity;
+        for (const k of ant.chamberPending) {
+          const [sx, sy] = k.split(',').map(Number);
+          const d = Math.abs(sx - ant.x) + Math.abs(sy - ant.y);
+          if (d < bestD) {
+            bestD = d;
+            best = [sx, sy];
+          }
+        }
+        return best;
+      }
+
+      function moveToward(ant, tx, ty) {
+        const moves = neighbors8(ant.x, ant.y).filter(([nx, ny]) => isEmpty(nx, ny));
+        if (moves.length === 0) return;
+        let best = moves[0];
+        let bestD = Infinity;
+        for (const [nx, ny] of moves) {
+          const d = Math.abs(tx - nx) + Math.abs(ty - ny);
+          if (d < bestD) {
+            bestD = d;
+            best = [nx, ny];
+          }
+        }
+        ant.x = best[0];
+        ant.y = best[1];
+      }
+
+      function chooseBuilderDigTarget(ant) {
+        const candidates = [];
+        for (const [nx, ny] of neighbors8(ant.x, ant.y)) {
+          if (!isSoil(nx, ny)) continue;
+          const dx = nx - ant.x;
+          const dy = ny - ant.y;
+          let score = 0;
+          if (dy > 0) score += 2.2;
+          if (dy < 0) score -= 1.2;
+          if (dx === ant.driftX) score += 0.7;
+          if (Math.abs(dx - ant.driftX) === 1) score += 0.2;
+          score += Math.random();
+          candidates.push([nx, ny, score]);
+        }
+        if (candidates.length === 0) return null;
+        candidates.sort((a, b) => b[2] - a[2]);
+        return [candidates[0][0], candidates[0][1]];
       }
 
       function updateAnt(ant) {
-        if (ant.relocatingAfterDeposit) {
-          const next = chooseSurfaceWalkMove(ant);
-          if (next) {
-            ant.x = next[0];
-            ant.y = next[1];
-            ant.surfaceWalkSteps += 1;
-            if (ant.surfaceWalkSteps >= ant.surfaceWalkTargetSteps) ant.relocatingAfterDeposit = false;
+        if (ant.phase === "descending") {
+          if (Math.random() < 0.35) {
+            ant.driftX = Math.max(-1, Math.min(1, ant.driftX + (Math.random() < 0.5 ? -1 : 1)));
+          }
+
+          const target = chooseBuilderDigTarget(ant);
+          if (target) {
+            const [dx, dy] = target;
+            if (digOnePixel(dx, dy)) {
+              ant.x = dx;
+              ant.y = dy;
+            }
           } else {
-            ant.relocatingAfterDeposit = false;
+            const next = chooseMove(ant);
+            if (next) {
+              ant.x = next[0];
+              ant.y = next[1];
+            }
+          }
+
+          const depth = ant.y - ant.surfaceY;
+          if (depth >= ant.targetDepth) {
+            ant.phase = "chamber";
+            ant.chamberPending = buildMainChamberPixels(ant.x, ant.y);
           }
           return;
         }
 
-        if (ant.returningToSurface) {
-          const next = chooseReturnMove(ant);
-          if (next) {
-            ant.x = next[0];
-            ant.y = next[1];
-          }
-          const surfaceY = Math.max(0, (surfaceDepthByX[ant.homeX] || SURFACE_BAND) - 1);
-          if (Math.abs(ant.x - ant.homeX) <= 1 && ant.y <= surfaceY + 1) {
-            placeSoilNearSurface(ant.homeX);
-            ant.carriedSoil = 0;
-            ant.returningToSurface = false;
-            ant.relocatingAfterDeposit = true;
-            ant.surfaceWalkDir = Math.random() < 0.5 ? -1 : 1;
-            ant.surfaceWalkTargetSteps = 5 + Math.floor(Math.random() * 10);
-            ant.surfaceWalkSteps = 0;
+        // chamber phase
+        const adjacentPending = [];
+        for (const [nx, ny] of neighbors8(ant.x, ant.y)) {
+          const k = key(nx, ny);
+          if (ant.chamberPending.has(k) && isSoil(nx, ny)) adjacentPending.push([nx, ny]);
+        }
+
+        if (adjacentPending.length > 0) {
+          const pick = adjacentPending[Math.floor(Math.random() * adjacentPending.length)];
+          if (digOnePixel(pick[0], pick[1])) {
+            ant.x = pick[0];
+            ant.y = pick[1];
+            ant.chamberPending.delete(key(pick[0], pick[1]));
           }
           return;
         }
 
-        // Move exactly one pixel, only into adjacent empty pixels.
-        const next = chooseMove(ant);
-        if (next) {
-          ant.x = next[0];
-          ant.y = next[1];
+        const nearest = nearestPendingPixel(ant);
+        if (nearest) {
+          moveToward(ant, nearest[0], nearest[1]);
         }
-
-        // Dig exactly one adjacent soil pixel.
-        const roomCandidates = roomFrontierDigCandidates(ant.x, ant.y);
-        if (roomCandidates.length > 0) {
-          roomCandidates.sort((a, b) => b[3] - a[3]);
-          const top = roomCandidates.slice(0, Math.min(2, roomCandidates.length));
-          const pick = top[Math.floor(Math.random() * top.length)];
-          const [dx, dy, roomIndex] = pick;
-          if (digOnePixel(dx, dy)) {
-            roomPlans[roomIndex].pending.delete(key(dx, dy));
-            ant.carriedSoil += 1;
-          }
-          return;
-        }
-
-        const digCandidates = genericDigCandidates(ant.x, ant.y);
-        if (digCandidates.length > 0) {
-          digCandidates.sort((a, b) => b[2] - a[2]);
-          const top = digCandidates.slice(0, Math.min(2, digCandidates.length));
-          const [dx, dy] = top[Math.floor(Math.random() * top.length)];
-          if (digOnePixel(dx, dy) ) {
-            ant.carriedSoil += 1;
-            maybeAddRoomPlan(dx, dy);
-          }
-        }
-
-        if (ant.carriedSoil >= SOIL_CARRY_LIMIT) ant.returningToSurface = true;
       }
 
 
@@ -416,7 +457,16 @@
       function addAnt() {
         const sx = Math.floor(WIDTH / 2);
         const sy = Math.max(0, (surfaceDepthByX[sx] || SURFACE_BAND) - 1);
-        ants.push({ x: sx, y: sy, carriedSoil: 0, returningToSurface: false, relocatingAfterDeposit: false, surfaceWalkDir: 1, surfaceWalkTargetSteps: 5, surfaceWalkSteps: 0, homeX: sx });
+        ants.push({
+          x: sx,
+          y: sy,
+          homeX: sx,
+          surfaceY: sy,
+          driftX: 0,
+          phase: "descending",
+          targetDepth: 20 + Math.floor(Math.random() * 11), // 20..30
+          chamberPending: new Set(),
+        });
       }
 
       speedPlayButton.addEventListener("click", () => setSpeed("play"));
@@ -434,7 +484,6 @@
         if (now - lastDigTime >= effectiveDigInterval) {
           lastDigTime = now;
           for (const ant of ants) updateAnt(ant);
-          pruneCompletedRooms();
         }
 
         drawTerrain();
@@ -443,8 +492,9 @@
 
         let empty = 0;
         for (let i = 0; i < cells.length; i++) if (cells[i] !== 0) empty++;
-        const plannedPixels = getAllPlannedPixels().size;
-        meta.textContent = `frame=${frame} ants=${ants.length} roomPlans=${roomPlans.length} planned=${plannedPixels} empty=${empty} speed=${speedMultiplier}x`;
+        const chamberPending = ants[0] ? ants[0].chamberPending.size : 0;
+        const phase = ants[0] ? ants[0].phase : "none";
+        meta.textContent = `frame=${frame} ants=${ants.length} phase=${phase} chamberPending=${chamberPending} empty=${empty} speed=${speedMultiplier}x`;
 
         requestAnimationFrame(tick);
       }
