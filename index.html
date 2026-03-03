@@ -56,7 +56,6 @@
           <li>Ants remove only 1 adjacent soil pixel per dig step.</li>
           <li>Multiple ants may occupy the same pixel.</li>
           <li>Ants prefer shared tunnel fronts so tunnels and rooms grow cooperatively.</li>
-          <li>Dig direction is angled/randomized (not straight down-only).</li>
           <li>About 1 in 10 ants self-elects as a room-builder near active tunnels.</li>
           <li>Surface texture variation is capped to a maximum 3px height difference.</li>
           <li>After removing 10 soil pixels, an ant returns to the surface, deposits one soil pixel, then walks sideways away from the hole.</li>
@@ -72,10 +71,6 @@
       const DIG_INTERVAL_MS = 360; // Global dig speed.
       const SURFACE_BAND = 20;
       const ROOM_SPACING_SOFT_MIN = 15;
-      const DOWNWARD_MOVE_BONUS = 3.6;
-      const DOWNWARD_DIG_BONUS = 2.8;
-      const DIAGONAL_DIG_BONUS = 2.2;
-      const STRAIGHT_DOWN_PENALTY = 2.4;
       const SOIL_CARRY_LIMIT = 10;
       const SPEEDS = { play: 1, fast: 10, veryFast: 100, veryVeryFast: 1000 };
 
@@ -241,12 +236,7 @@
           const k = key(nx, ny);
           for (let i = 0; i < roomPlans.length; i++) {
             if (roomPlans[i].pending.has(k)) {
-              const dx = nx - x;
-              const dy = ny - y;
-              let score = countEmptyNeighbors(nx, ny) * 0.4;
-              if (dy > 0) score += DOWNWARD_DIG_BONUS;
-              if (dy > 0 && dx !== 0) score += DIAGONAL_DIG_BONUS;
-              if (dy > 0 && dx === 0) score -= STRAIGHT_DOWN_PENALTY;
+              let score = countEmptyNeighbors(nx, ny) * 0.8;
               candidates.push([nx, ny, i, score]);
               break;
             }
@@ -262,13 +252,7 @@
           // Prefer continuing at existing tunnel fronts and digging downward.
           const support = countEmptyNeighbors(nx, ny);
           if (support < 1) continue;
-          let score = support * 0.7;
-          const dx = nx - x;
-          const dy = ny - y;
-          if (dy > 0) score += DOWNWARD_DIG_BONUS;
-          if (dy > 0 && dx !== 0) score += DIAGONAL_DIG_BONUS;
-          if (dy > 0 && dx === 0) score -= STRAIGHT_DOWN_PENALTY;
-          if (dy <= 0) score -= 0.7;
+          let score = support + Math.random() * 0.6;
           candidates.push([nx, ny, score]);
         }
         return candidates;
@@ -278,18 +262,13 @@
         const moves = neighbors8(ant.x, ant.y).filter(([nx, ny]) => isEmpty(nx, ny));
         if (moves.length === 0) return null;
 
-        // Prefer shared tunnels, active dig zones, and moving deeper underground.
+        // Prefer shared tunnels and active dig zones (no directional bias).
         let best = moves[0];
         let bestScore = -Infinity;
         for (const [nx, ny] of moves) {
           let score = countEmptyNeighbors(nx, ny) * 2;
-          const dx = nx - ant.x;
           const dy = ny - ant.y;
-          if (dy > 0) score += DOWNWARD_MOVE_BONUS;
-          if (dy > 0 && dx !== 0) score += 0.9;
-          if (dy > 0 && dx === 0) score -= 1.0;
-          if (ny < ant.y) score -= 1.2;
-          if (ant.y < SURFACE_BAND + 50 && ny > ant.y) score += 2.2;
+          if (dy !== 0) score += 0.25;
           if (Math.abs(nx - WIDTH / 2) < 18) score += 0.4;
           if (roomFrontierDigCandidates(nx, ny).length > 0) score += 3;
           score += Math.random() * 0.8;
