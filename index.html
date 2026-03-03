@@ -46,6 +46,7 @@
         <button id="speed-play" type="button">Play</button>
         <button id="speed-fast" type="button">Fast</button>
         <button id="speed-very-fast" type="button">Very fast</button>
+        <button id="speed-very-very-fast" type="button">Very very fast</button>
       </div>
       <canvas id="world" width="400" height="300"></canvas>
       <div class="rules">
@@ -57,8 +58,9 @@
           <li>Ants prefer shared tunnel fronts so tunnels and rooms grow cooperatively.</li>
           <li>Dig direction is angled/randomized (not straight down-only).</li>
           <li>About 1 in 10 ants self-elects as a room-builder near active tunnels.</li>
+          <li>Surface texture variation is capped to a maximum 3px height difference.</li>
           <li>Tunnels are capped around 2–3px wide to prevent runaway widening.</li>
-          <li>After removing 10 soil pixels, an ant returns to the surface and deposits one soil pixel.</li>
+          <li>After removing 10 soil pixels, an ant returns to the surface, deposits one soil pixel, then walks sideways away from the hole.</li>
           <li>Tunnel and room corridors bias toward 2–3 pixel width via frontier selection.</li>
         </ul>
       </div>
@@ -78,7 +80,7 @@
       const STRAIGHT_DOWN_PENALTY = 2.4;
       const MAX_TUNNEL_NEIGHBOR_EMPTY = 3;
       const SOIL_CARRY_LIMIT = 10;
-      const SPEEDS = { play: 1, fast: 10, veryFast: 100 };
+      const SPEEDS = { play: 1, fast: 10, veryFast: 100, veryVeryFast: 1000 };
 
       const COLORS = {
         soil: [96, 96, 96, 255],
@@ -93,6 +95,7 @@
       const speedPlayButton = document.getElementById("speed-play");
       const speedFastButton = document.getElementById("speed-fast");
       const speedVeryFastButton = document.getElementById("speed-very-fast");
+      const speedVeryVeryFastButton = document.getElementById("speed-very-very-fast");
       const ctx = canvas.getContext("2d", { alpha: false });
       const image = ctx.createImageData(WIDTH, HEIGHT);
 
@@ -161,8 +164,8 @@
 
       function buildSurfaceBand() {
         for (let x = 0; x < WIDTH; x++) {
-          const roughness = Math.floor((Math.random() - 0.5) * 8);
-          const depth = Math.max(14, Math.min(26, SURFACE_BAND + roughness));
+          const roughness = Math.floor(Math.random() * 4); // 0..3 (max 3px variation)
+          const depth = SURFACE_BAND + roughness;
           surfaceDepthByX[x] = depth;
           for (let y = 0; y < depth; y++) cells[idx(x, y)] = 1;
         }
@@ -349,6 +352,31 @@
         return false;
       }
 
+
+      function chooseSurfaceWalkMove(ant) {
+        const surfaceY = Math.max(0, (surfaceDepthByX[ant.homeX] || SURFACE_BAND) - 1);
+        // Keep ant near surface while walking away from tunnel hole.
+        if (ant.y > surfaceY) {
+          const up = [ant.x, ant.y - 1];
+          if (isEmpty(up[0], up[1])) return up;
+        }
+
+        const dir = ant.surfaceWalkDir || 1;
+        const nextX = ant.x + dir;
+        if (nextX < 0 || nextX >= WIDTH) return null;
+
+        const candidates = [
+          [nextX, ant.y],
+          [nextX, Math.max(0, ant.y - 1)],
+          [nextX, Math.min(HEIGHT - 1, ant.y + 1)],
+        ];
+        for (const [nx, ny] of candidates) {
+          if (isEmpty(nx, ny)) return [nx, ny];
+        }
+
+        return null;
+      }
+
       function pruneCompletedRooms() {
         for (let i = roomPlans.length - 1; i >= 0; i--) {
           if (roomPlans[i].pending.size === 0) roomPlans.splice(i, 1);
@@ -356,6 +384,19 @@
       }
 
       function updateAnt(ant) {
+        if (ant.relocatingAfterDeposit) {
+          const next = chooseSurfaceWalkMove(ant);
+          if (next) {
+            ant.x = next[0];
+            ant.y = next[1];
+            ant.surfaceWalkSteps += 1;
+            if (ant.surfaceWalkSteps >= ant.surfaceWalkTargetSteps) ant.relocatingAfterDeposit = false;
+          } else {
+            ant.relocatingAfterDeposit = false;
+          }
+          return;
+        }
+
         if (ant.returningToSurface) {
           const next = chooseReturnMove(ant);
           if (next) {
@@ -367,6 +408,10 @@
             placeSoilNearSurface(ant.homeX);
             ant.carriedSoil = 0;
             ant.returningToSurface = false;
+            ant.relocatingAfterDeposit = true;
+            ant.surfaceWalkDir = Math.random() < 0.5 ? -1 : 1;
+            ant.surfaceWalkTargetSteps = 5 + Math.floor(Math.random() * 10);
+            ant.surfaceWalkSteps = 0;
           }
           return;
         }
@@ -422,7 +467,7 @@
       function addAnt() {
         const sx = Math.floor(WIDTH / 2) + Math.floor((Math.random() - 0.5) * 6);
         const sy = SURFACE_BAND + 2 + Math.floor(Math.random() * 3);
-        ants.push({ x: sx, y: sy, isRoomScout: false, carriedSoil: 0, returningToSurface: false, homeX: sx });
+        ants.push({ x: sx, y: sy, isRoomScout: false, carriedSoil: 0, returningToSurface: false, relocatingAfterDeposit: false, surfaceWalkDir: 1, surfaceWalkTargetSteps: 5, surfaceWalkSteps: 0, homeX: sx });
         assignRoomScouts();
       }
 
@@ -436,6 +481,7 @@
       speedPlayButton.addEventListener("click", () => setSpeed("play"));
       speedFastButton.addEventListener("click", () => setSpeed("fast"));
       speedVeryFastButton.addEventListener("click", () => setSpeed("veryFast"));
+      speedVeryVeryFastButton.addEventListener("click", () => setSpeed("veryVeryFast"));
 
       let frame = 0;
       let lastDigTime = 0;
