@@ -41,8 +41,6 @@
     <div class="panel">
       <h1>Realtime Ant Formicarium (400×300)</h1>
       <div class="controls">
-        <button id="add-ant" type="button">+ Add ant</button>
-        <button id="remove-ant" type="button">− Remove ant</button>
         <button id="speed-play" type="button">Play</button>
         <button id="speed-fast" type="button">Fast</button>
         <button id="speed-very-fast" type="button">Very fast</button>
@@ -65,7 +63,6 @@
     <script>
       const WIDTH = 400;
       const HEIGHT = 300;
-      const INITIAL_ANT_COUNT = 1;
       const DIG_INTERVAL_MS = 360; // Global dig speed.
       const SURFACE_BAND = 20;
       const ROOM_SPACING_SOFT_MIN = 15;
@@ -81,8 +78,6 @@
 
       const canvas = document.getElementById("world");
       const meta = document.getElementById("meta");
-      const addAntButton = document.getElementById("add-ant");
-      const removeAntButton = document.getElementById("remove-ant");
       const speedPlayButton = document.getElementById("speed-play");
       const speedFastButton = document.getElementById("speed-fast");
       const speedVeryFastButton = document.getElementById("speed-very-fast");
@@ -419,17 +414,11 @@
       }
 
       function addAnt() {
-        const sx = Math.floor(WIDTH / 2) + Math.floor((Math.random() - 0.5) * 6);
-        const sy = SURFACE_BAND + 2 + Math.floor(Math.random() * 3);
+        const sx = Math.floor(WIDTH / 2);
+        const sy = Math.max(0, (surfaceDepthByX[sx] || SURFACE_BAND) - 1);
         ants.push({ x: sx, y: sy, carriedSoil: 0, returningToSurface: false, relocatingAfterDeposit: false, surfaceWalkDir: 1, surfaceWalkTargetSteps: 5, surfaceWalkSteps: 0, homeX: sx });
       }
 
-      function removeAnt() {
-        if (ants.length > 0) ants.pop();
-      }
-
-      addAntButton.addEventListener("click", addAnt);
-      removeAntButton.addEventListener("click", removeAnt);
       speedPlayButton.addEventListener("click", () => setSpeed("play"));
       speedFastButton.addEventListener("click", () => setSpeed("fast"));
       speedVeryFastButton.addEventListener("click", () => setSpeed("veryFast"));
@@ -461,7 +450,7 @@
       }
 
       buildSurfaceBand();
-      for (let i = 0; i < INITIAL_ANT_COUNT; i++) addAnt();
+      addAnt();
       tick();
     </script>
   </body>
