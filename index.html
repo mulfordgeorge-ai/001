@@ -155,8 +155,6 @@
 
       function digOnePixel(x, y) {
         if (!isSoil(x, y)) return false;
-        const hasSupportingSoil = neighbors8(x, y).some(([nx, ny]) => isSoil(nx, ny));
-        if (!hasSupportingSoil) return false;
         cells[idx(x, y)] = 2;
         return true;
       }
