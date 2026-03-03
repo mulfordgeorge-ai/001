@@ -5,10 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Realtime Ant Formicarium</title>
     <style>
-      :root {
-        color-scheme: dark;
-      }
-
+      :root { color-scheme: dark; }
       body {
         margin: 0;
         min-height: 100vh;
@@ -18,19 +15,8 @@
         color: #ddd;
         font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       }
-
-      .panel {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 0.75rem;
-      }
-
-      .controls {
-        display: flex;
-        gap: 0.5rem;
-      }
-
+      .panel { display: flex; flex-direction: column; align-items: center; gap: 0.75rem; }
+      .controls { display: flex; gap: 0.5rem; }
       button {
         background: #222;
         color: #ddd;
@@ -38,11 +24,7 @@
         padding: 0.3rem 0.55rem;
         cursor: pointer;
       }
-
-      button:hover {
-        background: #333;
-      }
-
+      button:hover { background: #333; }
       canvas {
         image-rendering: pixelated;
         width: 800px;
@@ -50,10 +32,7 @@
         border: 1px solid #666;
         background: #fff;
       }
-
-      .meta {
-        opacity: 0.85;
-      }
+      .meta { opacity: 0.85; }
     </style>
   </head>
   <body>
@@ -71,7 +50,7 @@
       const WIDTH = 400;
       const HEIGHT = 300;
       const INITIAL_ANT_COUNT = 1;
-      const DIG_INTERVAL_MS = 360; // Global digging speed variable.
+      const DIG_INTERVAL_MS = 360; // Global dig speed.
       const SURFACE_BAND = 20;
       const ROOM_SPACING_SOFT_MIN = 15;
 
@@ -85,15 +64,16 @@
       const meta = document.getElementById("meta");
       const addAntButton = document.getElementById("add-ant");
       const removeAntButton = document.getElementById("remove-ant");
-
       const ctx = canvas.getContext("2d", { alpha: false });
       const image = ctx.createImageData(WIDTH, HEIGHT);
+
       const cells = new Uint8Array(WIDTH * HEIGHT); // 0 soil, 1 empty
       const ants = [];
-      const rooms = [];
+      const roomPlans = [];
 
       const idx = (x, y) => y * WIDTH + x;
       const inBounds = (x, y) => x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT;
+      const key = (x, y) => `${x},${y}`;
 
       function setPixel(i, rgba) {
         image.data[i] = rgba[0];
@@ -102,25 +82,28 @@
         image.data[i + 3] = rgba[3];
       }
 
+      function isEmpty(x, y) {
+        return inBounds(x, y) && cells[idx(x, y)] === 1;
+      }
+
       function isSoil(x, y) {
         return inBounds(x, y) && cells[idx(x, y)] === 0;
       }
 
-      function hasNearbySoil(x, y, radius = 1) {
-        for (let dy = -radius; dy <= radius; dy++) {
-          for (let dx = -radius; dx <= radius; dx++) {
-            if ((dx !== 0 || dy !== 0) && isSoil(x + dx, y + dy)) return true;
-          }
-        }
-        return false;
+      function neighbors4(x, y) {
+        return [
+          [x, y + 1],
+          [x + 1, y],
+          [x - 1, y],
+          [x, y - 1],
+        ].filter(([nx, ny]) => inBounds(nx, ny));
       }
 
       function drawTerrain() {
         for (let y = 0; y < HEIGHT; y++) {
           for (let x = 0; x < WIDTH; x++) {
-            const c = cells[idx(x, y)];
             const p = idx(x, y) * 4;
-            setPixel(p, c === 1 ? COLORS.empty : COLORS.soil);
+            setPixel(p, cells[idx(x, y)] === 1 ? COLORS.empty : COLORS.soil);
           }
         }
       }
@@ -141,15 +124,19 @@
       }
 
       function digOnePixel(x, y) {
-        if (!inBounds(x, y)) return false;
-        const i = idx(x, y);
-        if (cells[i] === 1) return false;
-        cells[i] = 1;
+        if (!isSoil(x, y)) return false;
+        cells[idx(x, y)] = 1;
         return true;
       }
 
-      function generateOrganicRoom(cx, cy, w, h) {
-        const points = [];
+      function countEmptyNeighbors(x, y) {
+        let n = 0;
+        for (const [nx, ny] of neighbors4(x, y)) if (isEmpty(nx, ny)) n++;
+        return n;
+      }
+
+      function generateOrganicRoomPixels(cx, cy, w, h) {
+        const px = [];
         const rx = w / 2;
         const ry = h / 2;
         const left = Math.floor(cx - rx - 2);
@@ -159,120 +146,136 @@
 
         for (let y = top; y <= bottom; y++) {
           for (let x = left; x <= right; x++) {
-            if (!inBounds(x, y)) continue;
+            if (!inBounds(x, y) || y <= SURFACE_BAND + 3) continue;
             const nx = (x - cx) / rx;
             const ny = (y - cy) / ry;
             const dist = nx * nx + ny * ny;
-            const jitter = (Math.random() - 0.5) * 0.28;
-            if (dist <= 1 + jitter) points.push([x, y]);
+            const jitter = (Math.random() - 0.5) * 0.34;
+            if (dist <= 1 + jitter) px.push([x, y]);
           }
         }
 
-        for (let i = points.length - 1; i > 0; i--) {
-          const j = Math.floor(Math.random() * (i + 1));
-          [points[i], points[j]] = [points[j], points[i]];
-        }
-
-        return points;
+        return new Set(px.map(([x, y]) => key(x, y)));
       }
 
-      function maybeQueueRoom(ant) {
-        if (ant.y < SURFACE_BAND + 12) return;
-        if (ant.digQueue.length > 0) return;
-        if (Math.random() > 0.07) return;
+      function getAllPlannedPixels() {
+        const all = new Set();
+        for (const plan of roomPlans) {
+          for (const k of plan.pending) all.add(k);
+        }
+        return all;
+      }
+
+      function maybeAddRoomPlan(anchorX, anchorY) {
+        if (anchorY < SURFACE_BAND + 12) return;
+        if (Math.random() > 0.05) return;
 
         const roomW = 10 + Math.floor(Math.random() * 6); // 10..15
         const roomH = 5 + Math.floor(Math.random() * 6); // 5..10
-        const cx = ant.x + Math.floor((Math.random() - 0.5) * 10);
-        const cy = ant.y + Math.floor((Math.random() - 0.5) * 6);
-
+        const cx = anchorX + Math.floor((Math.random() - 0.5) * 12);
+        const cy = anchorY + Math.floor((Math.random() - 0.5) * 8);
         if (!inBounds(cx, cy)) return;
 
         let minDist = Infinity;
-        for (const room of rooms) {
-          const d = Math.hypot(cx - room.cx, cy - room.cy);
-          if (d < minDist) minDist = d;
+        for (const room of roomPlans) {
+          minDist = Math.min(minDist, Math.hypot(cx - room.cx, cy - room.cy));
         }
-
         if (minDist < ROOM_SPACING_SOFT_MIN && Math.random() < 0.85) return;
 
-        ant.digQueue = generateOrganicRoom(cx, cy, roomW, roomH);
-        rooms.push({ cx, cy, w: roomW, h: roomH });
+        roomPlans.push({
+          cx,
+          cy,
+          pending: generateOrganicRoomPixels(cx, cy, roomW, roomH),
+        });
       }
 
-      function chooseStep(ant) {
-        const dirs = [
-          [0, 1],
-          [1, 0],
-          [-1, 0],
-          [0, -1],
-        ];
-
-        const weighted = [];
-        for (const [dx, dy] of dirs) {
-          let weight = 1;
-          if (dy > 0) weight += 2;
-          if (ant.y < SURFACE_BAND + 30 && dy > 0) weight += 2;
-          for (let i = 0; i < weight; i++) weighted.push([dx, dy]);
+      function roomFrontierDigCandidates(x, y) {
+        const candidates = [];
+        for (const [nx, ny] of neighbors4(x, y)) {
+          if (!isSoil(nx, ny)) continue;
+          const k = key(nx, ny);
+          for (let i = 0; i < roomPlans.length; i++) {
+            if (roomPlans[i].pending.has(k)) {
+              candidates.push([nx, ny, i]);
+              break;
+            }
+          }
         }
+        return candidates;
+      }
 
-        return weighted[Math.floor(Math.random() * weighted.length)];
+      function genericDigCandidates(x, y) {
+        const candidates = [];
+        for (const [nx, ny] of neighbors4(x, y)) {
+          if (!isSoil(nx, ny)) continue;
+          // Prefer continuing at existing tunnel fronts.
+          const support = countEmptyNeighbors(nx, ny);
+          if (support >= 1) candidates.push([nx, ny, support]);
+        }
+        return candidates;
+      }
+
+      function chooseMove(ant) {
+        const moves = neighbors4(ant.x, ant.y).filter(([nx, ny]) => isEmpty(nx, ny));
+        if (moves.length === 0) return null;
+
+        // Prefer existing trunk tunnels and active dig zones.
+        let best = moves[0];
+        let bestScore = -Infinity;
+        for (const [nx, ny] of moves) {
+          let score = countEmptyNeighbors(nx, ny) * 2;
+          if (ny > ant.y) score += 1.5; // slight downward preference.
+          if (Math.abs(nx - WIDTH / 2) < 18) score += 0.4;
+          if (roomFrontierDigCandidates(nx, ny).length > 0) score += 3;
+          score += Math.random() * 0.8;
+          if (score > bestScore) {
+            bestScore = score;
+            best = [nx, ny];
+          }
+        }
+        return best;
+      }
+
+      function pruneCompletedRooms() {
+        for (let i = roomPlans.length - 1; i >= 0; i--) {
+          if (roomPlans[i].pending.size === 0) roomPlans.splice(i, 1);
+        }
       }
 
       function updateAnt(ant) {
-        // If shaping a room, remove only one queued pixel this tick.
-        if (ant.digQueue.length > 0) {
-          const [qx, qy] = ant.digQueue.pop();
-          if (digOnePixel(qx, qy)) {
-            ant.x = qx;
-            ant.y = qy;
+        // Move exactly one pixel, only into adjacent empty pixels.
+        const next = chooseMove(ant);
+        if (next) {
+          ant.x = next[0];
+          ant.y = next[1];
+        }
+
+        // Dig exactly one adjacent soil pixel.
+        const roomCandidates = roomFrontierDigCandidates(ant.x, ant.y);
+        if (roomCandidates.length > 0) {
+          const pick = roomCandidates[Math.floor(Math.random() * roomCandidates.length)];
+          const [dx, dy, roomIndex] = pick;
+          if (digOnePixel(dx, dy)) {
+            roomPlans[roomIndex].pending.delete(key(dx, dy));
           }
           return;
         }
 
-        if (Math.random() < 0.35) {
-          const [vx, vy] = chooseStep(ant);
-          ant.vx = vx;
-          ant.vy = vy;
-        }
-
-        let nx = ant.x + ant.vx;
-        let ny = ant.y + ant.vy;
-
-        if (!inBounds(nx, ny) || !hasNearbySoil(nx, ny, 1)) {
-          let found = false;
-          for (let i = 0; i < 8; i++) {
-            const [vx, vy] = chooseStep(ant);
-            const tx = ant.x + vx;
-            const ty = ant.y + vy;
-            if (inBounds(tx, ty) && hasNearbySoil(tx, ty, 1)) {
-              ant.vx = vx;
-              ant.vy = vy;
-              nx = tx;
-              ny = ty;
-              found = true;
-              break;
-            }
+        const digCandidates = genericDigCandidates(ant.x, ant.y);
+        if (digCandidates.length > 0) {
+          digCandidates.sort((a, b) => b[2] - a[2]);
+          const top = digCandidates.slice(0, Math.min(2, digCandidates.length));
+          const [dx, dy] = top[Math.floor(Math.random() * top.length)];
+          if (digOnePixel(dx, dy)) {
+            maybeAddRoomPlan(dx, dy);
           }
-          if (!found) return;
         }
-
-        ant.x = nx;
-        ant.y = ny;
-        digOnePixel(ant.x, ant.y); // Exactly one pixel removed per step.
-        maybeQueueRoom(ant);
       }
 
       function addAnt() {
         const sx = Math.floor(WIDTH / 2) + Math.floor((Math.random() - 0.5) * 6);
-        const sy = SURFACE_BAND + 3 + Math.floor(Math.random() * 2);
-        ants.push({
-          x: sx,
-          y: sy,
-          vx: 0,
-          vy: 1,
-          digQueue: [],
-        });
+        const sy = SURFACE_BAND + 2 + Math.floor(Math.random() * 3);
+        ants.push({ x: sx, y: sy });
       }
 
       function removeAnt() {
@@ -291,6 +294,7 @@
         if (now - lastDigTime >= DIG_INTERVAL_MS) {
           lastDigTime = now;
           for (const ant of ants) updateAnt(ant);
+          pruneCompletedRooms();
         }
 
         drawTerrain();
@@ -299,7 +303,8 @@
 
         let empty = 0;
         for (let i = 0; i < cells.length; i++) if (cells[i] === 1) empty++;
-        meta.textContent = `frame=${frame} ants=${ants.length} rooms=${rooms.length} empty=${empty} digMs=${DIG_INTERVAL_MS}`;
+        const plannedPixels = getAllPlannedPixels().size;
+        meta.textContent = `frame=${frame} ants=${ants.length} roomPlans=${roomPlans.length} planned=${plannedPixels} empty=${empty} digMs=${DIG_INTERVAL_MS}`;
 
         requestAnimationFrame(tick);
       }
