@@ -52,6 +52,8 @@
           <li>Ants remove only 1 adjacent soil pixel per dig step.</li>
           <li>Multiple ants may occupy the same pixel.</li>
           <li>Ants prefer shared tunnel fronts so tunnels and rooms grow cooperatively.</li>
+          <li>Dig direction is angled/randomized (not straight down-only).</li>
+          <li>About 1 in 10 ants self-elects as a room-builder near active tunnels.</li>
           <li>Tunnel and room corridors bias toward 2–3 pixel width via frontier selection.</li>
         </ul>
       </div>
@@ -65,8 +67,10 @@
       const DIG_INTERVAL_MS = 360; // Global dig speed.
       const SURFACE_BAND = 20;
       const ROOM_SPACING_SOFT_MIN = 15;
-      const DOWNWARD_MOVE_BONUS = 4.5;
-      const DOWNWARD_DIG_BONUS = 3.5;
+      const DOWNWARD_MOVE_BONUS = 3.6;
+      const DOWNWARD_DIG_BONUS = 2.8;
+      const DIAGONAL_DIG_BONUS = 2.2;
+      const STRAIGHT_DOWN_PENALTY = 2.4;
 
       const COLORS = {
         soil: [96, 96, 96, 255],
@@ -111,6 +115,19 @@
           [x - 1, y],
           [x, y - 1],
         ].filter(([nx, ny]) => inBounds(nx, ny));
+      }
+
+      function neighbors8(x, y) {
+        const pts = [];
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            const nx = x + dx;
+            const ny = y + dy;
+            if (inBounds(nx, ny)) pts.push([nx, ny]);
+          }
+        }
+        return pts;
       }
 
       function drawTerrain() {
@@ -215,12 +232,17 @@
 
       function roomFrontierDigCandidates(x, y) {
         const candidates = [];
-        for (const [nx, ny] of neighbors4(x, y)) {
+        for (const [nx, ny] of neighbors8(x, y)) {
           if (!isSoil(nx, ny)) continue;
           const k = key(nx, ny);
           for (let i = 0; i < roomPlans.length; i++) {
             if (roomPlans[i].pending.has(k)) {
-              const score = widthPreferenceScore(nx, ny) + (ny > y ? DOWNWARD_DIG_BONUS : 0);
+              const dx = nx - x;
+              const dy = ny - y;
+              let score = widthPreferenceScore(nx, ny);
+              if (dy > 0) score += DOWNWARD_DIG_BONUS;
+              if (dy > 0 && dx !== 0) score += DIAGONAL_DIG_BONUS;
+              if (dy > 0 && dx === 0) score -= STRAIGHT_DOWN_PENALTY;
               candidates.push([nx, ny, i, score]);
               break;
             }
@@ -231,21 +253,25 @@
 
       function genericDigCandidates(x, y) {
         const candidates = [];
-        for (const [nx, ny] of neighbors4(x, y)) {
+        for (const [nx, ny] of neighbors8(x, y)) {
           if (!isSoil(nx, ny)) continue;
           // Prefer continuing at existing tunnel fronts and digging downward.
           const support = countEmptyNeighbors(nx, ny);
           if (support < 1) continue;
           let score = widthPreferenceScore(nx, ny) + support * 0.3;
-          if (ny > y) score += DOWNWARD_DIG_BONUS;
-          if (ny <= y) score -= 0.8;
+          const dx = nx - x;
+          const dy = ny - y;
+          if (dy > 0) score += DOWNWARD_DIG_BONUS;
+          if (dy > 0 && dx !== 0) score += DIAGONAL_DIG_BONUS;
+          if (dy > 0 && dx === 0) score -= STRAIGHT_DOWN_PENALTY;
+          if (dy <= 0) score -= 0.7;
           candidates.push([nx, ny, score]);
         }
         return candidates;
       }
 
       function chooseMove(ant) {
-        const moves = neighbors4(ant.x, ant.y).filter(([nx, ny]) => isEmpty(nx, ny));
+        const moves = neighbors8(ant.x, ant.y).filter(([nx, ny]) => isEmpty(nx, ny));
         if (moves.length === 0) return null;
 
         // Prefer shared tunnels, active dig zones, and moving deeper underground.
@@ -253,7 +279,11 @@
         let bestScore = -Infinity;
         for (const [nx, ny] of moves) {
           let score = countEmptyNeighbors(nx, ny) * 2;
-          if (ny > ant.y) score += DOWNWARD_MOVE_BONUS;
+          const dx = nx - ant.x;
+          const dy = ny - ant.y;
+          if (dy > 0) score += DOWNWARD_MOVE_BONUS;
+          if (dy > 0 && dx !== 0) score += 0.9;
+          if (dy > 0 && dx === 0) score -= 1.0;
           if (ny < ant.y) score -= 1.2;
           if (ant.y < SURFACE_BAND + 50 && ny > ant.y) score += 2.2;
           if (Math.abs(nx - WIDTH / 2) < 18) score += 0.4;
@@ -299,20 +329,30 @@
           digCandidates.sort((a, b) => b[2] - a[2]);
           const top = digCandidates.slice(0, Math.min(2, digCandidates.length));
           const [dx, dy] = top[Math.floor(Math.random() * top.length)];
-          if (digOnePixel(dx, dy)) {
+          if (digOnePixel(dx, dy) && ant.isRoomScout) {
             maybeAddRoomPlan(dx, dy);
           }
+        }
+      }
+
+
+      function assignRoomScouts() {
+        for (let i = 0; i < ants.length; i++) {
+          // About 1 in 10 ants self-elect as room builders.
+          ants[i].isRoomScout = i % 10 === 0;
         }
       }
 
       function addAnt() {
         const sx = Math.floor(WIDTH / 2) + Math.floor((Math.random() - 0.5) * 6);
         const sy = SURFACE_BAND + 2 + Math.floor(Math.random() * 3);
-        ants.push({ x: sx, y: sy });
+        ants.push({ x: sx, y: sy, isRoomScout: false });
+        assignRoomScouts();
       }
 
       function removeAnt() {
         if (ants.length > 0) ants.pop();
+        assignRoomScouts();
       }
 
       addAntButton.addEventListener("click", addAnt);
@@ -337,7 +377,8 @@
         let empty = 0;
         for (let i = 0; i < cells.length; i++) if (cells[i] === 1) empty++;
         const plannedPixels = getAllPlannedPixels().size;
-        meta.textContent = `frame=${frame} ants=${ants.length} roomPlans=${roomPlans.length} planned=${plannedPixels} empty=${empty} digMs=${DIG_INTERVAL_MS}`;
+        const scouts = ants.reduce((n, a) => n + (a.isRoomScout ? 1 : 0), 0);
+        meta.textContent = `frame=${frame} ants=${ants.length} scouts=${scouts} roomPlans=${roomPlans.length} planned=${plannedPixels} empty=${empty} digMs=${DIG_INTERVAL_MS}`;
 
         requestAnimationFrame(tick);
       }
