@@ -334,7 +334,7 @@
 
       function buildMainChamberPixels(cx, cy) {
         const pending = new Set();
-        const half = 5; // ~10x10 chamber
+        const half = 8; // ~15x15 chamber (1.5x larger than ~10x10)
         for (let y = cy - half - 1; y <= cy + half + 1; y++) {
           for (let x = cx - half - 1; x <= cx + half + 1; x++) {
             if (!inBounds(x, y)) continue;
@@ -464,7 +464,7 @@
           surfaceY: sy,
           driftX: 0,
           phase: "descending",
-          targetDepth: 20 + Math.floor(Math.random() * 11), // 20..30
+          targetDepth: 40 + Math.floor(Math.random() * 21), // 40..60
           chamberPending: new Set(),
         });
       }
