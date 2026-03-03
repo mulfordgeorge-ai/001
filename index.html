@@ -52,6 +52,7 @@
         <ul>
           <li>The queen moves 1 pixel per step, only into adjacent empty cells (no jumps).</li>
           <li>Surface texture variation is capped to a maximum 3px height difference.</li>
+          <li>The queen excavates the chamber one pixel at a time.</li>
         </ul>
       </div>
       <div class="meta" id="meta">Starting simulation…</div>
@@ -205,14 +206,6 @@
       }
 
 
-      function carvePendingChamber(pending) {
-        for (const k of pending) {
-          const [sx, sy] = k.split(',').map(Number);
-          if (isSoil(sx, sy)) cells[idx(sx, sy)] = 2;
-        }
-      }
-
-
       function chamberBottomPoint(pending, fallbackX, fallbackY) {
         let maxY = -1;
         for (const k of pending) {
@@ -240,6 +233,7 @@
         let bestD = Infinity;
         for (const k of ant.chamberPending) {
           const [sx, sy] = k.split(',').map(Number);
+          if (!isSoil(sx, sy)) continue;
           const d = Math.abs(sx - ant.x) + Math.abs(sy - ant.y);
           if (d < bestD) {
             bestD = d;
@@ -311,9 +305,7 @@
             const [wx, wy] = chamberBottomPoint(ant.chamberPending, ant.x, ant.y);
             ant.waitX = wx;
             ant.waitY = wy;
-            carvePendingChamber(ant.chamberPending);
-            ant.chamberPending.clear();
-            ant.phase = "to_bottom";
+            ant.phase = "chamber";
           }
           return;
         }
@@ -328,7 +320,7 @@
           return;
         }
 
-        // chamber phase
+        // chamber phase: dig one soil pixel per step.
         const adjacentPending = [];
         for (const [nx, ny] of neighbors8(ant.x, ant.y)) {
           const k = key(nx, ny);
@@ -336,20 +328,26 @@
         }
 
         if (adjacentPending.length > 0) {
-          const pick = adjacentPending[Math.floor(Math.random() * adjacentPending.length)];
-          if (digOnePixel(pick[0], pick[1])) {
-            ant.x = pick[0];
-            ant.y = pick[1];
-            ant.chamberPending.delete(key(pick[0], pick[1]));
+          // Try adjacent pending cells in random order; dig at most one pixel this tick.
+          for (let i = adjacentPending.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [adjacentPending[i], adjacentPending[j]] = [adjacentPending[j], adjacentPending[i]];
           }
-          return;
+          for (const [dx, dy] of adjacentPending) {
+            if (digOnePixel(dx, dy)) {
+              ant.x = dx;
+              ant.y = dy;
+              ant.chamberPending.delete(key(dx, dy));
+              return;
+            }
+          }
         }
 
         const nearest = nearestPendingPixel(ant);
         if (nearest) {
           moveToward(ant, nearest[0], nearest[1]);
         } else {
-          ant.phase = "waiting";
+          ant.phase = "to_bottom";
         }
       }
 
@@ -368,7 +366,7 @@
           surfaceY: sy,
           driftX: 0,
           phase: "descending",
-          targetDepth: 26 + Math.floor(Math.random() * 9), // ~30px depth (26..34)
+          targetDepth: 36 + Math.floor(Math.random() * 9), // ~40px depth (36..44)
           chamberPending: new Set(),
           waitX: sx,
           waitY: sy,
