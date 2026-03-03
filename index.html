@@ -348,6 +348,14 @@
         return pending;
       }
 
+
+      function carvePendingChamber(pending) {
+        for (const k of pending) {
+          const [sx, sy] = k.split(',').map(Number);
+          if (isSoil(sx, sy)) cells[idx(sx, sy)] = 2;
+        }
+      }
+
       function nearestPendingPixel(ant) {
         let best = null;
         let bestD = Infinity;
@@ -422,6 +430,8 @@
           if (depth >= ant.targetDepth) {
             ant.phase = "chamber";
             ant.chamberPending = buildMainChamberPixels(ant.x, ant.y);
+            carvePendingChamber(ant.chamberPending);
+            ant.chamberPending.clear();
           }
           return;
         }
@@ -446,6 +456,8 @@
         const nearest = nearestPendingPixel(ant);
         if (nearest) {
           moveToward(ant, nearest[0], nearest[1]);
+        } else {
+          ant.phase = "chamber_done";
         }
       }
 
