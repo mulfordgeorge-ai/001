@@ -52,6 +52,7 @@
       const ANT_COUNT = 1;
       const STEP_INTERVAL_MS = 360;
       const SURFACE_BAND = 20;
+      const ROOM_SPACING_SOFT_MIN = 15;
 
       const COLORS = {
         soil: [96, 96, 96, 255],
@@ -65,6 +66,7 @@
       const image = ctx.createImageData(WIDTH, HEIGHT);
       const cells = new Uint8Array(WIDTH * HEIGHT); // 0 soil, 1 empty
       const ants = [];
+      const rooms = [];
 
       const idx = (x, y) => y * WIDTH + x;
       const inBounds = (x, y) => x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT;
@@ -74,6 +76,19 @@
         image.data[i + 1] = rgba[1];
         image.data[i + 2] = rgba[2];
         image.data[i + 3] = rgba[3];
+      }
+
+      function isSoil(x, y) {
+        return inBounds(x, y) && cells[idx(x, y)] === 0;
+      }
+
+      function hasNearbySoil(x, y, radius = 2) {
+        for (let dy = -radius; dy <= radius; dy++) {
+          for (let dx = -radius; dx <= radius; dx++) {
+            if ((dx !== 0 || dy !== 0) && isSoil(x + dx, y + dy)) return true;
+          }
+        }
+        return false;
       }
 
       function drawTerrain() {
@@ -95,11 +110,9 @@
 
       function buildSurfaceBand() {
         for (let x = 0; x < WIDTH; x++) {
-          const roughness = Math.floor((Math.random() - 0.5) * 8); // -4..+3
+          const roughness = Math.floor((Math.random() - 0.5) * 8);
           const depth = Math.max(14, Math.min(26, SURFACE_BAND + roughness));
-          for (let y = 0; y < depth; y++) {
-            cells[idx(x, y)] = 1;
-          }
+          for (let y = 0; y < depth; y++) cells[idx(x, y)] = 1;
         }
       }
 
@@ -108,39 +121,114 @@
         cells[idx(x, y)] = 1;
       }
 
-      function weightedStep(ant) {
+      // Keep tunnels around 2-3 pixels thick.
+      function digTunnelBrush(x, y) {
+        dig(x, y);
+        dig(x + 1, y);
+        dig(x - 1, y);
+        dig(x, y + 1);
+        dig(x, y - 1);
+
+        if (Math.random() < 0.4) dig(x + (Math.random() < 0.5 ? 1 : -1), y + (Math.random() < 0.5 ? 1 : -1));
+      }
+
+      function digRoom(cx, cy, w, h) {
+        const left = Math.floor(cx - w / 2);
+        const right = left + w - 1;
+        const top = Math.floor(cy - h / 2);
+        const bottom = top + h - 1;
+
+        for (let y = top; y <= bottom; y++) {
+          for (let x = left; x <= right; x++) {
+            if (!inBounds(x, y)) continue;
+            cells[idx(x, y)] = 1;
+          }
+        }
+
+        rooms.push({ cx, cy, w, h });
+      }
+
+      function maybeDigRoom(ant) {
+        if (ant.y < SURFACE_BAND + 12) return;
+        if (Math.random() > 0.08) return;
+
+        const roomW = 10 + Math.floor(Math.random() * 6); // 10..15
+        const roomH = 5 + Math.floor(Math.random() * 6); // 5..10
+        const cx = ant.x + Math.floor((Math.random() - 0.5) * 10);
+        const cy = ant.y + Math.floor((Math.random() - 0.5) * 6);
+
+        if (!inBounds(cx, cy)) return;
+
+        let minDist = Infinity;
+        for (const room of rooms) {
+          const d = Math.hypot(cx - room.cx, cy - room.cy);
+          if (d < minDist) minDist = d;
+        }
+
+        // Soft spacing: strongly prefer at least 15px apart.
+        if (minDist < ROOM_SPACING_SOFT_MIN && Math.random() < 0.85) return;
+
+        digRoom(cx, cy, roomW, roomH);
+      }
+
+      function chooseStep(ant) {
         const dirs = [
           [0, 1],
           [1, 0],
           [-1, 0],
           [0, -1],
         ];
-        const pick = dirs[Math.floor(Math.random() * dirs.length)];
-        ant.vx = pick[0];
-        ant.vy = pick[1];
+
+        // Prefer moving underground.
+        const weighted = [];
+        for (const [dx, dy] of dirs) {
+          let weight = 1;
+          if (dy > 0) weight += 2;
+          if (ant.y < SURFACE_BAND + 30 && dy > 0) weight += 2;
+          for (let i = 0; i < weight; i++) weighted.push([dx, dy]);
+        }
+
+        return weighted[Math.floor(Math.random() * weighted.length)];
       }
 
       function updateAnt(ant) {
-        if (Math.random() < 0.3) weightedStep(ant);
+        if (Math.random() < 0.35) {
+          const [vx, vy] = chooseStep(ant);
+          ant.vx = vx;
+          ant.vy = vy;
+        }
 
         let nx = ant.x + ant.vx;
         let ny = ant.y + ant.vy;
 
-        if (!inBounds(nx, ny)) {
-          weightedStep(ant);
-          nx = ant.x + ant.vx;
-          ny = ant.y + ant.vy;
+        if (!inBounds(nx, ny) || !hasNearbySoil(nx, ny, 2)) {
+          let found = false;
+          for (let i = 0; i < 8; i++) {
+            const [vx, vy] = chooseStep(ant);
+            const tx = ant.x + vx;
+            const ty = ant.y + vy;
+            if (inBounds(tx, ty) && hasNearbySoil(tx, ty, 2)) {
+              ant.vx = vx;
+              ant.vy = vy;
+              nx = tx;
+              ny = ty;
+              found = true;
+              break;
+            }
+          }
+          if (!found) return;
         }
 
-        ant.x = Math.max(0, Math.min(WIDTH - 1, nx));
-        ant.y = Math.max(0, Math.min(HEIGHT - 1, ny));
+        ant.x = nx;
+        ant.y = ny;
 
-        dig(ant.x, ant.y);
+        digTunnelBrush(ant.x, ant.y);
+        maybeDigRoom(ant);
       }
 
       function seedAnts() {
         const sx = Math.floor(WIDTH / 2);
-        const sy = SURFACE_BAND + 2;
+        const sy = SURFACE_BAND + 3;
         for (let i = 0; i < ANT_COUNT; i++) {
           ants.push({
             x: sx,
@@ -157,18 +245,18 @@
         frame++;
 
         const now = performance.now();
-        const shouldStep = now - lastStepTime >= STEP_INTERVAL_MS;
-        if (shouldStep) {
+        if (now - lastStepTime >= STEP_INTERVAL_MS) {
           lastStepTime = now;
-          for (let i = 0; i < ants.length; i++) updateAnt(ants[i]);
+          for (const ant of ants) updateAnt(ant);
         }
 
         drawTerrain();
         drawAnts();
         ctx.putImageData(image, 0, 0);
 
-        const dug = cells.reduce((n, c) => n + (c === 1 ? 1 : 0), 0);
-        meta.textContent = `frame=${frame} ants=${ants.length} empty=${dug}`;
+        let empty = 0;
+        for (let i = 0; i < cells.length; i++) if (cells[i] === 1) empty++;
+        meta.textContent = `frame=${frame} ants=${ants.length} rooms=${rooms.length} empty=${empty}`;
 
         requestAnimationFrame(tick);
       }
