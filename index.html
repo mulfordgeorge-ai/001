@@ -32,6 +32,8 @@
         border: 1px solid #666;
         background: #fff;
       }
+      .rules { max-width: 800px; font-size: 0.8rem; line-height: 1.35; opacity: 0.9; }
+      .rules ul { margin: 0.35rem 0 0 1.1rem; padding: 0; }
       .meta { opacity: 0.85; }
     </style>
   </head>
@@ -43,6 +45,16 @@
         <button id="remove-ant" type="button">− Remove ant</button>
       </div>
       <canvas id="world" width="400" height="300"></canvas>
+      <div class="rules">
+        Nest rules:
+        <ul>
+          <li>Ants move 1 pixel per step, only into adjacent empty cells (no jumps).</li>
+          <li>Ants remove only 1 adjacent soil pixel per dig step.</li>
+          <li>Multiple ants may occupy the same pixel.</li>
+          <li>Ants prefer shared tunnel fronts so tunnels and rooms grow cooperatively.</li>
+          <li>Tunnel and room corridors bias toward 2–3 pixel width via frontier selection.</li>
+        </ul>
+      </div>
       <div class="meta" id="meta">Starting simulation…</div>
     </div>
 
@@ -191,6 +203,16 @@
         });
       }
 
+      function widthPreferenceScore(nx, ny) {
+        // Encourage corridor/room frontiers around 2-3px thickness.
+        const support = countEmptyNeighbors(nx, ny);
+        if (support === 2) return 3.2;
+        if (support === 3) return 2.8;
+        if (support === 1) return 1.2;
+        if (support >= 4) return 0.3;
+        return 0;
+      }
+
       function roomFrontierDigCandidates(x, y) {
         const candidates = [];
         for (const [nx, ny] of neighbors4(x, y)) {
@@ -198,7 +220,8 @@
           const k = key(nx, ny);
           for (let i = 0; i < roomPlans.length; i++) {
             if (roomPlans[i].pending.has(k)) {
-              candidates.push([nx, ny, i]);
+              const score = widthPreferenceScore(nx, ny) + (ny > y ? DOWNWARD_DIG_BONUS : 0);
+              candidates.push([nx, ny, i, score]);
               break;
             }
           }
@@ -213,7 +236,7 @@
           // Prefer continuing at existing tunnel fronts and digging downward.
           const support = countEmptyNeighbors(nx, ny);
           if (support < 1) continue;
-          let score = support;
+          let score = widthPreferenceScore(nx, ny) + support * 0.3;
           if (ny > y) score += DOWNWARD_DIG_BONUS;
           if (ny <= y) score -= 0.8;
           candidates.push([nx, ny, score]);
@@ -261,7 +284,9 @@
         // Dig exactly one adjacent soil pixel.
         const roomCandidates = roomFrontierDigCandidates(ant.x, ant.y);
         if (roomCandidates.length > 0) {
-          const pick = roomCandidates[Math.floor(Math.random() * roomCandidates.length)];
+          roomCandidates.sort((a, b) => b[3] - a[3]);
+          const top = roomCandidates.slice(0, Math.min(2, roomCandidates.length));
+          const pick = top[Math.floor(Math.random() * top.length)];
           const [dx, dy, roomIndex] = pick;
           if (digOnePixel(dx, dy)) {
             roomPlans[roomIndex].pending.delete(key(dx, dy));
