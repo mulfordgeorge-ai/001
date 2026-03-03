@@ -55,8 +55,6 @@
           <li>Ants move 1 pixel per step, only into adjacent empty cells (no jumps).</li>
           <li>Ants remove only 1 adjacent soil pixel per dig step.</li>
           <li>Multiple ants may occupy the same pixel.</li>
-          <li>Ants prefer shared tunnel fronts so tunnels and rooms grow cooperatively.</li>
-          <li>About 1 in 10 ants self-elects as a room-builder near active tunnels.</li>
           <li>Surface texture variation is capped to a maximum 3px height difference.</li>
           <li>After removing 10 soil pixels, an ant returns to the surface, deposits one soil pixel, then walks sideways away from the hole.</li>
         </ul>
@@ -76,7 +74,8 @@
 
       const COLORS = {
         soil: [96, 96, 96, 255],
-        empty: [255, 255, 255, 255],
+        surfaceEmpty: [255, 255, 255, 255],
+        excavatedEmpty: [192, 192, 192, 255],
         ant: [0, 0, 0, 255],
       };
 
@@ -91,7 +90,7 @@
       const ctx = canvas.getContext("2d", { alpha: false });
       const image = ctx.createImageData(WIDTH, HEIGHT);
 
-      const cells = new Uint8Array(WIDTH * HEIGHT); // 0 soil, 1 empty
+      const cells = new Uint8Array(WIDTH * HEIGHT); // 0 soil, 1 surface-empty, 2 excavated-empty
       const surfaceDepthByX = new Uint16Array(WIDTH);
       const ants = [];
       const roomPlans = [];
@@ -109,7 +108,7 @@
       }
 
       function isEmpty(x, y) {
-        return inBounds(x, y) && cells[idx(x, y)] === 1;
+        return inBounds(x, y) && cells[idx(x, y)] !== 0;
       }
 
       function isSoil(x, y) {
@@ -142,7 +141,8 @@
         for (let y = 0; y < HEIGHT; y++) {
           for (let x = 0; x < WIDTH; x++) {
             const p = idx(x, y) * 4;
-            setPixel(p, cells[idx(x, y)] === 1 ? COLORS.empty : COLORS.soil);
+            const c = cells[idx(x, y)];
+            setPixel(p, c === 0 ? COLORS.soil : c === 1 ? COLORS.surfaceEmpty : COLORS.excavatedEmpty);
           }
         }
       }
@@ -165,7 +165,7 @@
 
       function digOnePixel(x, y) {
         if (!isSoil(x, y)) return false;
-        cells[idx(x, y)] = 1;
+        cells[idx(x, y)] = 2;
         return true;
       }
 
@@ -270,7 +270,6 @@
           const dy = ny - ant.y;
           if (dy !== 0) score += 0.25;
           if (Math.abs(nx - WIDTH / 2) < 18) score += 0.4;
-          if (roomFrontierDigCandidates(nx, ny).length > 0) score += 3;
           score += Math.random() * 0.8;
           if (score > bestScore) {
             bestScore = score;
@@ -407,19 +406,11 @@
           const [dx, dy] = top[Math.floor(Math.random() * top.length)];
           if (digOnePixel(dx, dy) ) {
             ant.carriedSoil += 1;
-            if (ant.isRoomScout) maybeAddRoomPlan(dx, dy);
+            maybeAddRoomPlan(dx, dy);
           }
         }
 
         if (ant.carriedSoil >= SOIL_CARRY_LIMIT) ant.returningToSurface = true;
-      }
-
-
-      function assignRoomScouts() {
-        for (let i = 0; i < ants.length; i++) {
-          // About 1 in 10 ants self-elect as room builders.
-          ants[i].isRoomScout = i % 10 === 0;
-        }
       }
 
 
@@ -430,13 +421,11 @@
       function addAnt() {
         const sx = Math.floor(WIDTH / 2) + Math.floor((Math.random() - 0.5) * 6);
         const sy = SURFACE_BAND + 2 + Math.floor(Math.random() * 3);
-        ants.push({ x: sx, y: sy, isRoomScout: false, carriedSoil: 0, returningToSurface: false, relocatingAfterDeposit: false, surfaceWalkDir: 1, surfaceWalkTargetSteps: 5, surfaceWalkSteps: 0, homeX: sx });
-        assignRoomScouts();
+        ants.push({ x: sx, y: sy, carriedSoil: 0, returningToSurface: false, relocatingAfterDeposit: false, surfaceWalkDir: 1, surfaceWalkTargetSteps: 5, surfaceWalkSteps: 0, homeX: sx });
       }
 
       function removeAnt() {
         if (ants.length > 0) ants.pop();
-        assignRoomScouts();
       }
 
       addAntButton.addEventListener("click", addAnt);
@@ -464,10 +453,9 @@
         ctx.putImageData(image, 0, 0);
 
         let empty = 0;
-        for (let i = 0; i < cells.length; i++) if (cells[i] === 1) empty++;
+        for (let i = 0; i < cells.length; i++) if (cells[i] !== 0) empty++;
         const plannedPixels = getAllPlannedPixels().size;
-        const scouts = ants.reduce((n, a) => n + (a.isRoomScout ? 1 : 0), 0);
-        meta.textContent = `frame=${frame} ants=${ants.length} scouts=${scouts} roomPlans=${roomPlans.length} planned=${plannedPixels} empty=${empty} speed=${speedMultiplier}x`;
+        meta.textContent = `frame=${frame} ants=${ants.length} roomPlans=${roomPlans.length} planned=${plannedPixels} empty=${empty} speed=${speedMultiplier}x`;
 
         requestAnimationFrame(tick);
       }
