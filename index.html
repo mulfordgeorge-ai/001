@@ -16,7 +16,7 @@
         font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       }
       .panel { display: flex; flex-direction: column; align-items: center; gap: 0.75rem; }
-      .controls { display: flex; gap: 0.5rem; }
+      .controls { display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: center; }
       button {
         background: #222;
         color: #ddd;
@@ -43,6 +43,9 @@
       <div class="controls">
         <button id="add-ant" type="button">+ Add ant</button>
         <button id="remove-ant" type="button">− Remove ant</button>
+        <button id="speed-play" type="button">Play</button>
+        <button id="speed-fast" type="button">Fast</button>
+        <button id="speed-very-fast" type="button">Very fast</button>
       </div>
       <canvas id="world" width="400" height="300"></canvas>
       <div class="rules">
@@ -75,6 +78,7 @@
       const STRAIGHT_DOWN_PENALTY = 2.4;
       const MAX_TUNNEL_NEIGHBOR_EMPTY = 3;
       const SOIL_CARRY_LIMIT = 10;
+      const SPEEDS = { play: 1, fast: 10, veryFast: 100 };
 
       const COLORS = {
         soil: [96, 96, 96, 255],
@@ -86,6 +90,9 @@
       const meta = document.getElementById("meta");
       const addAntButton = document.getElementById("add-ant");
       const removeAntButton = document.getElementById("remove-ant");
+      const speedPlayButton = document.getElementById("speed-play");
+      const speedFastButton = document.getElementById("speed-fast");
+      const speedVeryFastButton = document.getElementById("speed-very-fast");
       const ctx = canvas.getContext("2d", { alpha: false });
       const image = ctx.createImageData(WIDTH, HEIGHT);
 
@@ -93,6 +100,7 @@
       const surfaceDepthByX = new Uint16Array(WIDTH);
       const ants = [];
       const roomPlans = [];
+      let speedMultiplier = SPEEDS.play;
 
       const idx = (x, y) => y * WIDTH + x;
       const inBounds = (x, y) => x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT;
@@ -406,6 +414,11 @@
         }
       }
 
+
+      function setSpeed(mode) {
+        speedMultiplier = SPEEDS[mode] ?? SPEEDS.play;
+      }
+
       function addAnt() {
         const sx = Math.floor(WIDTH / 2) + Math.floor((Math.random() - 0.5) * 6);
         const sy = SURFACE_BAND + 2 + Math.floor(Math.random() * 3);
@@ -420,6 +433,9 @@
 
       addAntButton.addEventListener("click", addAnt);
       removeAntButton.addEventListener("click", removeAnt);
+      speedPlayButton.addEventListener("click", () => setSpeed("play"));
+      speedFastButton.addEventListener("click", () => setSpeed("fast"));
+      speedVeryFastButton.addEventListener("click", () => setSpeed("veryFast"));
 
       let frame = 0;
       let lastDigTime = 0;
@@ -427,7 +443,8 @@
         frame++;
 
         const now = performance.now();
-        if (now - lastDigTime >= DIG_INTERVAL_MS) {
+        const effectiveDigInterval = Math.max(1, DIG_INTERVAL_MS / speedMultiplier);
+        if (now - lastDigTime >= effectiveDigInterval) {
           lastDigTime = now;
           for (const ant of ants) updateAnt(ant);
           pruneCompletedRooms();
@@ -441,7 +458,7 @@
         for (let i = 0; i < cells.length; i++) if (cells[i] === 1) empty++;
         const plannedPixels = getAllPlannedPixels().size;
         const scouts = ants.reduce((n, a) => n + (a.isRoomScout ? 1 : 0), 0);
-        meta.textContent = `frame=${frame} ants=${ants.length} scouts=${scouts} roomPlans=${roomPlans.length} planned=${plannedPixels} empty=${empty} digMs=${DIG_INTERVAL_MS}`;
+        meta.textContent = `frame=${frame} ants=${ants.length} scouts=${scouts} roomPlans=${roomPlans.length} planned=${plannedPixels} empty=${empty} speed=${speedMultiplier}x`;
 
         requestAnimationFrame(tick);
       }
