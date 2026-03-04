@@ -565,7 +565,30 @@
         }
       }
 
-      function trackWorkerStuck(ant, moved) {
+      function chooseLateralExitSearchMove(ant) {
+        const options = neighbors8(ant.x, ant.y).filter(([nx, ny]) => isEmpty(nx, ny));
+        if (options.length === 0) return null;
+
+        let best = options[0];
+        let bestScore = -Infinity;
+        for (const [nx, ny] of options) {
+          const dx = Math.abs(nx - ant.x);
+          const dy = ny - ant.y;
+          let score = 0;
+          if (dx > 0) score += 2.4; // strongly prefer side-step search
+          if (dy < 0) score += 1.1; // still favor upward progress
+          if (dy > 0) score -= 0.8;
+          score += countEmptyNeighbors(nx, ny) * 0.5;
+          score += Math.random() * 0.5;
+          if (score > bestScore) {
+            bestScore = score;
+            best = [nx, ny];
+          }
+        }
+        return best;
+      }
+
+      function trackWorkerStuck(ant, moved, mode = "generic") {
         if (moved) {
           ant.stuckSteps = 0;
           ant.lastX = ant.x;
@@ -578,7 +601,13 @@
         ant.stuckSteps = 0;
         ant.depositDirection = Math.random() < 0.5 ? -1 : 1;
         ant.pickupX = ant.x;
-        const nudge = chooseMove(ant);
+
+        let nudge = null;
+        if (mode === "ascending") {
+          nudge = chooseLateralExitSearchMove(ant);
+        }
+        if (!nudge) nudge = chooseMove(ant);
+
         if (nudge) {
           ant.x = nudge[0];
           ant.y = nudge[1];
@@ -601,7 +630,7 @@
           if (!atSurface) {
             moveToward(ant, ant.x, 0);
             moved = ant.x !== startX || ant.y !== startY;
-            trackWorkerStuck(ant, moved);
+            trackWorkerStuck(ant, moved, "ascending");
             return;
           }
 
