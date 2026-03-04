@@ -48,8 +48,9 @@
       </div>
       <canvas id="world" width="400" height="300"></canvas>
       <div class="rules">
-        Nest rules:
+        Colony rules:
         <ul>
+          <li>The first ant is the queen and builds the primary chamber.</li>
           <li>The queen moves 1 pixel per step, only into adjacent empty cells (no jumps).</li>
           <li>Surface texture variation is capped to a maximum 3px height difference.</li>
           <li>The queen excavates the chamber one pixel at a time.</li>
@@ -70,6 +71,7 @@
         surfaceEmpty: [255, 255, 255, 255],
         excavatedEmpty: [255, 255, 255, 255],
         ant: [0, 0, 0, 255],
+        egg: [185, 185, 185, 255],
       };
 
       const canvas = document.getElementById("world");
@@ -84,6 +86,7 @@
       const cells = new Uint8Array(WIDTH * HEIGHT); // 0 soil, 1 surface-empty, 2 excavated-empty
       const surfaceDepthByX = new Uint16Array(WIDTH);
       const ants = [];
+      const eggs = [];
       let speedMultiplier = SPEEDS.play;
 
       const idx = (x, y) => y * WIDTH + x;
@@ -134,6 +137,14 @@
             const c = cells[idx(x, y)];
             setPixel(p, c === 0 ? COLORS.soil : c === 1 ? COLORS.surfaceEmpty : COLORS.excavatedEmpty);
           }
+        }
+      }
+
+
+      function drawEggs() {
+        for (const egg of eggs) {
+          const p = idx(egg.x, egg.y) * 4;
+          setPixel(p, COLORS.egg);
         }
       }
 
@@ -328,6 +339,14 @@
           return;
         }
 
+        if (ant.phase === "waiting") {
+          if (ant.isQueen && ant.eggsLaid < 10) {
+            const now = performance.now();
+            if (now - ant.lastEggTime >= 10000) layEggNearQueen(ant);
+          }
+          return;
+        }
+
         // chamber phase: dig one soil pixel per step.
         const adjacentPending = [];
         for (const [nx, ny] of neighbors8(ant.x, ant.y)) {
@@ -360,6 +379,27 @@
       }
 
 
+
+      function eggAt(x, y) {
+        return eggs.some((e) => e.x === x && e.y === y);
+      }
+
+      function layEggNearQueen(queen) {
+        const candidates = [];
+        for (const [nx, ny] of neighbors8(queen.x, queen.y)) {
+          if (!isEmpty(nx, ny)) continue;
+          if (eggAt(nx, ny)) continue;
+          candidates.push([nx, ny]);
+        }
+
+        if (candidates.length === 0) return false;
+        const pick = candidates[Math.floor(Math.random() * candidates.length)];
+        eggs.push({ x: pick[0], y: pick[1] });
+        queen.eggsLaid += 1;
+        queen.lastEggTime = performance.now();
+        return true;
+      }
+
       function setSpeed(mode) {
         speedMultiplier = SPEEDS[mode] ?? SPEEDS.play;
       }
@@ -378,6 +418,9 @@
           chamberPending: new Set(),
           waitX: sx,
           waitY: sy,
+          isQueen: true,
+          eggsLaid: 0,
+          lastEggTime: performance.now(),
         });
       }
 
@@ -399,14 +442,17 @@
         }
 
         drawTerrain();
+        drawEggs();
         drawAnts();
         ctx.putImageData(image, 0, 0);
 
         let empty = 0;
         for (let i = 0; i < cells.length; i++) if (cells[i] !== 0) empty++;
-        const chamberPending = ants[0] ? ants[0].chamberPending.size : 0;
-        const phase = ants[0] ? ants[0].phase : "none";
-        meta.textContent = `frame=${frame} ants=${ants.length} phase=${phase} chamberPending=${chamberPending} empty=${empty} speed=${speedMultiplier}x`;
+        const queen = ants[0];
+        const chamberPending = queen ? queen.chamberPending.size : 0;
+        const phase = queen ? queen.phase : "none";
+        const eggsLaid = queen ? queen.eggsLaid : 0;
+        meta.textContent = `frame=${frame} queenPhase=${phase} primaryChamberPending=${chamberPending} eggs=${eggsLaid}/10 empty=${empty} speed=${speedMultiplier}x`;
 
         requestAnimationFrame(tick);
       }
