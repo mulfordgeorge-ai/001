@@ -54,7 +54,7 @@
           <li>Eggs hatch after 8–10 seconds into builder ants (20%) or worker ants (80%).</li>
           <li>Builders excavate soil and pause every 3 digs until a worker collects the soil load.</li>
           <li>Workers collect builder loads, climb to the surface, then carry 30px+ left/right before dumping.</li>
-          <li>Ants carrying soil are hidden while transporting it.</li>
+          <li>Ants carrying soil stay visible while transporting it.</li>
         </ul>
       </div>
       <div class="meta" id="meta">Starting simulation…</div>
@@ -434,7 +434,7 @@
 
       function stepBuilderAnt(ant) {
         if (ant.waitingForPickup) {
-          ant.hidden = true;
+          ant.hidden = false;
           return;
         }
 
@@ -449,7 +449,7 @@
             if (ant.digsSinceLoad >= BUILDER_LOAD_DIGS) {
               ant.waitingForPickup = true;
               ant.digsSinceLoad = 0;
-              ant.hidden = true;
+              ant.hidden = false;
             }
             return;
           }
@@ -464,7 +464,7 @@
 
       function stepWorkerAnt(ant) {
         if (ant.hasLoad) {
-          ant.hidden = true;
+          ant.hidden = false;
 
           if (!ant.depositDirection) ant.depositDirection = Math.random() < 0.5 ? -1 : 1;
 
@@ -497,7 +497,7 @@
             targetBuilder.waitingForPickup = false;
             targetBuilder.hidden = false;
             ant.hasLoad = true;
-            ant.hidden = true;
+            ant.hidden = false;
             ant.pickupX = ant.x;
             ant.pickupY = ant.y;
             ant.depositDirection = Math.random() < 0.5 ? -1 : 1;
