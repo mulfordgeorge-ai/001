@@ -51,9 +51,10 @@
         Colony rules:
         <ul>
           <li>The first ant is the queen and builds the primary chamber.</li>
-          <li>The queen moves 1 pixel per step, only into adjacent empty cells (no jumps).</li>
-          <li>Surface texture variation is capped to a maximum 3px height difference.</li>
-          <li>The queen excavates the chamber one pixel at a time.</li>
+          <li>Eggs hatch after 30–45 seconds into builder ants (20%) or worker ants (80%).</li>
+          <li>Builders excavate soil and pause every 3 digs until a worker collects the soil load.</li>
+          <li>Workers collect builder loads, climb to the surface, then carry 30px+ left/right before dumping.</li>
+          <li>Ants carrying soil are hidden while transporting it.</li>
         </ul>
       </div>
       <div class="meta" id="meta">Starting simulation…</div>
@@ -65,12 +66,19 @@
       const DIG_INTERVAL_MS = 360; // Global dig speed.
       const SURFACE_BAND = 20;
       const SPEEDS = { play: 1, fast: 10, veryFast: 100, veryVeryFast: 1000 };
+      const EGG_HATCH_MIN_MS = 30000;
+      const EGG_HATCH_MAX_MS = 45000;
+      const BUILDER_SPAWN_CHANCE = 0.2;
+      const BUILDER_LOAD_DIGS = 3;
+      const WORKER_DUMP_DISTANCE = 30;
 
       const COLORS = {
         soil: [96, 96, 96, 255],
         surfaceEmpty: [255, 255, 255, 255],
         excavatedEmpty: [255, 255, 255, 255],
-        ant: [0, 0, 0, 255],
+        queen: [0, 0, 0, 255],
+        builder: [30, 30, 30, 255],
+        worker: [70, 70, 70, 255],
         egg: [185, 185, 185, 255],
       };
 
@@ -150,8 +158,13 @@
 
       function drawAnts() {
         for (const ant of ants) {
+          if (ant.hidden) continue;
           const p = idx(ant.x, ant.y) * 4;
-          setPixel(p, COLORS.ant);
+          if (ant.isQueen) {
+            setPixel(p, COLORS.queen);
+            continue;
+          }
+          setPixel(p, ant.role === "builder" ? COLORS.builder : COLORS.worker);
         }
       }
 
@@ -319,6 +332,11 @@
       }
 
       function updateAnt(ant) {
+        if (!ant.isQueen) {
+          updateColonyAnt(ant);
+          return;
+        }
+
         if (ant.phase === "descending") {
           if (Math.random() < 0.35) {
             ant.driftX = Math.max(-1, Math.min(1, ant.driftX + (Math.random() < 0.5 ? -1 : 1)));
@@ -400,6 +418,110 @@
         }
       }
 
+      function nearestBuilderNeedingPickup(worker) {
+        let best = null;
+        let bestD = Infinity;
+        for (const ant of ants) {
+          if (ant.role !== "builder" || !ant.waitingForPickup) continue;
+          const d = Math.abs(ant.x - worker.x) + Math.abs(ant.y - worker.y);
+          if (d < bestD) {
+            bestD = d;
+            best = ant;
+          }
+        }
+        return best;
+      }
+
+      function stepBuilderAnt(ant) {
+        if (ant.waitingForPickup) {
+          ant.hidden = true;
+          return;
+        }
+
+        ant.hidden = false;
+        const target = chooseBuilderDigTarget(ant);
+        if (target) {
+          const [dx, dy] = target;
+          if (digOnePixel(dx, dy)) {
+            ant.x = dx;
+            ant.y = dy;
+            ant.digsSinceLoad += 1;
+            if (ant.digsSinceLoad >= BUILDER_LOAD_DIGS) {
+              ant.waitingForPickup = true;
+              ant.digsSinceLoad = 0;
+              ant.hidden = true;
+            }
+            return;
+          }
+        }
+
+        const next = chooseMove(ant);
+        if (next) {
+          ant.x = next[0];
+          ant.y = next[1];
+        }
+      }
+
+      function stepWorkerAnt(ant) {
+        if (ant.hasLoad) {
+          ant.hidden = true;
+
+          if (!ant.depositDirection) ant.depositDirection = Math.random() < 0.5 ? -1 : 1;
+
+          const atSurface = ant.y <= Math.max(0, (surfaceDepthByX[ant.x] || SURFACE_BAND) - 1);
+          if (!atSurface) {
+            moveToward(ant, ant.x, 0);
+            return;
+          }
+
+          const horizontalFromPickup = Math.abs(ant.x - ant.pickupX);
+          if (horizontalFromPickup < WORKER_DUMP_DISTANCE) {
+            const tx = Math.max(0, Math.min(WIDTH - 1, ant.x + ant.depositDirection));
+            moveToward(ant, tx, ant.y);
+            return;
+          }
+
+          ant.hasLoad = false;
+          ant.hidden = false;
+          ant.pickupX = ant.x;
+          ant.pickupY = ant.y;
+          ant.depositDirection = 0;
+          return;
+        }
+
+        ant.hidden = false;
+        const targetBuilder = nearestBuilderNeedingPickup(ant);
+        if (targetBuilder) {
+          const d = Math.abs(targetBuilder.x - ant.x) + Math.abs(targetBuilder.y - ant.y);
+          if (d <= 1) {
+            targetBuilder.waitingForPickup = false;
+            targetBuilder.hidden = false;
+            ant.hasLoad = true;
+            ant.hidden = true;
+            ant.pickupX = ant.x;
+            ant.pickupY = ant.y;
+            ant.depositDirection = Math.random() < 0.5 ? -1 : 1;
+            return;
+          }
+          moveToward(ant, targetBuilder.x, targetBuilder.y);
+          return;
+        }
+
+        const next = chooseMove(ant);
+        if (next) {
+          ant.x = next[0];
+          ant.y = next[1];
+        }
+      }
+
+      function updateColonyAnt(ant) {
+        if (ant.role === "builder") {
+          stepBuilderAnt(ant);
+          return;
+        }
+        stepWorkerAnt(ant);
+      }
+
 
 
       function eggAt(x, y) {
@@ -428,10 +550,51 @@
 
         if (candidates.length === 0) return false;
         const pick = candidates[Math.floor(Math.random() * candidates.length)];
-        eggs.push({ x: pick[0], y: pick[1] });
+        eggs.push({
+          x: pick[0],
+          y: pick[1],
+          hatchAt: performance.now() + EGG_HATCH_MIN_MS + Math.random() * (EGG_HATCH_MAX_MS - EGG_HATCH_MIN_MS),
+        });
         queen.eggsLaid += 1;
         queen.lastEggTime = performance.now();
         return true;
+      }
+
+      function hatchEggs(now) {
+        for (let i = eggs.length - 1; i >= 0; i--) {
+          const egg = eggs[i];
+          if (now < egg.hatchAt) continue;
+          eggs.splice(i, 1);
+          spawnAntFromEgg(egg.x, egg.y);
+        }
+      }
+
+      function spawnAntFromEgg(x, y) {
+        const role = Math.random() < BUILDER_SPAWN_CHANCE ? "builder" : "worker";
+        ants.push({
+          x,
+          y,
+          homeX: x,
+          surfaceY: y,
+          driftX: 0,
+          phase: "colony",
+          targetDepth: 0,
+          chamberPending: null,
+          waitX: x,
+          waitY: y,
+          isQueen: false,
+          eggsLaid: 0,
+          lastEggTime: 0,
+          chamberBounds: null,
+          role,
+          digsSinceLoad: 0,
+          waitingForPickup: false,
+          hasLoad: false,
+          hidden: false,
+          pickupX: x,
+          pickupY: y,
+          depositDirection: 0,
+        });
       }
 
       function setSpeed(mode) {
@@ -456,6 +619,14 @@
           eggsLaid: 0,
           lastEggTime: performance.now(),
           chamberBounds: null,
+          role: "queen",
+          digsSinceLoad: 0,
+          waitingForPickup: false,
+          hasLoad: false,
+          hidden: false,
+          pickupX: sx,
+          pickupY: sy,
+          depositDirection: 0,
         });
       }
 
@@ -476,6 +647,8 @@
           for (const ant of ants) updateAnt(ant);
         }
 
+        hatchEggs(now);
+
         drawTerrain();
         drawEggs();
         drawAnts();
@@ -487,7 +660,17 @@
         const chamberPending = queen ? queen.chamberPending.size : 0;
         const phase = queen ? queen.phase : "none";
         const eggsLaid = queen ? queen.eggsLaid : 0;
-        meta.textContent = `frame=${frame} queenPhase=${phase} primaryChamberPending=${chamberPending} eggs=${eggsLaid}/10 empty=${empty} speed=${speedMultiplier}x`;
+        let builders = 0;
+        let workers = 0;
+        let waitingBuilders = 0;
+        for (const ant of ants) {
+          if (ant.role === "builder") {
+            builders++;
+            if (ant.waitingForPickup) waitingBuilders++;
+          }
+          if (ant.role === "worker") workers++;
+        }
+        meta.textContent = `frame=${frame} queenPhase=${phase} primaryChamberPending=${chamberPending} eggs=${eggsLaid}/10 liveEggs=${eggs.length} builders=${builders} workers=${workers} waitingLoads=${waitingBuilders} empty=${empty} speed=${speedMultiplier}x`;
 
         requestAnimationFrame(tick);
       }
