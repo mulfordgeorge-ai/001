@@ -380,7 +380,7 @@
         }
 
         if (ant.phase === "waiting") {
-          if (ant.isQueen && ant.eggsLaid < 10) {
+          if (ant.isQueen && eggs.length < 10) {
             const now = performance.now();
             if (now - ant.lastEggTime >= 4000 + Math.random() * 2000) layEggNearQueen(ant);
           }
@@ -760,7 +760,7 @@
           if (ant.role === "worker") workers++;
         }
         const buildStage = sharedBuilderObjective ? sharedBuilderObjective.stage : "none";
-        meta.textContent = `frame=${frame} queenPhase=${phase} buildStage=${buildStage} primaryChamberPending=${chamberPending} eggs=${eggsLaid}/10 liveEggs=${eggs.length} builders=${builders} workers=${workers} empty=${empty} speed=${speedMultiplier}x`;
+        meta.textContent = `frame=${frame} queenPhase=${phase} buildStage=${buildStage} primaryChamberPending=${chamberPending} eggsLaid=${eggsLaid} liveEggs=${eggs.length}/10 builders=${builders} workers=${workers} empty=${empty} speed=${speedMultiplier}x`;
 
         requestAnimationFrame(tick);
       }
