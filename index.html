@@ -68,7 +68,7 @@
       const COLORS = {
         soil: [96, 96, 96, 255],
         surfaceEmpty: [255, 255, 255, 255],
-        excavatedEmpty: [192, 192, 192, 255],
+        excavatedEmpty: [255, 255, 255, 255],
         ant: [0, 0, 0, 255],
       };
 
@@ -189,17 +189,24 @@
 
       function buildMainChamberPixels(cx, cy) {
         const pending = new Set();
-        const half = 10; // ~20px diameter chamber
-        for (let y = cy - half - 1; y <= cy + half + 1; y++) {
-          for (let x = cx - half - 1; x <= cx + half + 1; x++) {
+        const halfWidth = 10; // ~20px wide chamber
+        const chamberHeight = 12 + Math.floor(Math.random() * 7); // randomized height 12..18
+        const bottomY = cy + Math.floor(chamberHeight / 2);
+
+        for (let x = cx - halfWidth - 1; x <= cx + halfWidth + 1; x++) {
+          if (x < 0 || x >= WIDTH) continue;
+          const nx = Math.max(-1, Math.min(1, (x - cx) / halfWidth));
+          const arch = Math.sqrt(Math.max(0, 1 - nx * nx));
+          const roofNoise = Math.floor((Math.random() - 0.5) * 3); // slight irregularity
+          let topY = Math.round(bottomY - chamberHeight * arch) + roofNoise;
+          topY = Math.min(topY, bottomY - 2);
+
+          for (let y = topY; y <= bottomY; y++) {
             if (!inBounds(x, y)) continue;
-            const nx = (x - cx) / half;
-            const ny = (y - cy) / half;
-            const dist = nx * nx + ny * ny;
-            const jitter = (Math.random() - 0.5) * 0.35;
-            if (dist <= 1 + jitter) pending.add(key(x, y));
+            pending.add(key(x, y));
           }
         }
+
         return pending;
       }
 
