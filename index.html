@@ -53,7 +53,7 @@
         <ul>
           <li>The first ant is the queen and builds the primary chamber.</li>
           <li>Eggs hatch after 8–10 seconds into builder ants (20%) or worker ants (80%).</li>
-          <li>Builders share one objective: tunnel 15–25px left/right from the primary chamber, then carve a small chamber.</li>
+          <li>Builders share one objective: tunnel until they are >30px from queen, carve a small chamber, then return to the main chamber.</li>
           <li>Builders continuously dig toward the shared builder objective (no pickup pauses).</li>
           <li>Workers roam tunnels and do not carry soil.</li>
         </ul>
@@ -71,6 +71,7 @@
       const EGG_HATCH_MAX_MS = 10000;
       const BUILDER_SPAWN_CHANCE = 0.2;
       const WORKER_STUCK_RESET_STEPS = 24;
+      const BUILDER_CHAMBER_MIN_QUEEN_DISTANCE = 31;
 
       const COLORS = {
         soil: [96, 96, 96, 255],
@@ -483,6 +484,18 @@
         return [candidates[0][0], candidates[0][1]];
       }
 
+
+      function queenMainChamberPoint() {
+        const queen = ants[0];
+        if (!queen) return [Math.floor(WIDTH / 2), SURFACE_BAND + 70];
+        return [queen.waitX ?? queen.x, queen.waitY ?? queen.y];
+      }
+
+      function distanceFromQueenMain(x, y) {
+        const [qx, qy] = queenMainChamberPoint();
+        return Math.hypot(x - qx, y - qy);
+      }
+
       function maybeAdvanceBuilderObjective(dx, dy) {
         if (!sharedBuilderObjective) return;
         if (sharedBuilderObjective.stage === "tunnel") {
@@ -493,8 +506,13 @@
           sharedBuilderObjective.headY = dy;
 
           if (sharedBuilderObjective.tunnelProgress >= sharedBuilderObjective.tunnelGoal) {
-            sharedBuilderObjective.stage = "chamber";
-            sharedBuilderObjective.chamberPending = buildSmallChamberPixels(dx, dy);
+            const distance = distanceFromQueenMain(dx, dy);
+            if (distance >= BUILDER_CHAMBER_MIN_QUEEN_DISTANCE) {
+              sharedBuilderObjective.stage = "chamber";
+              sharedBuilderObjective.chamberPending = buildSmallChamberPixels(dx, dy);
+            } else {
+              sharedBuilderObjective.tunnelGoal += 1;
+            }
           }
         }
       }
@@ -502,11 +520,43 @@
         initSharedBuilderObjective();
         ant.hidden = false;
 
+        const objective = sharedBuilderObjective;
+        if (!objective) {
+          const wander = chooseMove(ant);
+          if (wander) {
+            ant.x = wander[0];
+            ant.y = wander[1];
+          }
+          return;
+        }
+
+        if (objective.stage === "return_to_main") {
+          moveToward(ant, objective.returnX, objective.returnY);
+          if (ant.x === objective.returnX && ant.y === objective.returnY) {
+            objective.stage = "complete";
+          }
+          return;
+        }
+
+        if (objective.stage === "complete") {
+          const [qx, qy] = queenMainChamberPoint();
+          if (Math.abs(ant.x - qx) + Math.abs(ant.y - qy) > 3) {
+            moveToward(ant, qx, qy);
+          } else {
+            const wander = chooseMove(ant);
+            if (wander) {
+              ant.x = wander[0];
+              ant.y = wander[1];
+            }
+          }
+          return;
+        }
+
         let target = null;
-        if (sharedBuilderObjective?.stage === "tunnel") {
+        if (objective.stage === "tunnel") {
           target = chooseObjectiveTunnelDigTarget(ant);
-        } else if (sharedBuilderObjective?.stage === "chamber") {
-          const nearest = nearestPendingPixel({ x: ant.x, y: ant.y, chamberPending: sharedBuilderObjective.chamberPending });
+        } else if (objective.stage === "chamber") {
+          const nearest = nearestPendingPixel({ x: ant.x, y: ant.y, chamberPending: objective.chamberPending });
           if (nearest) {
             const [nx, ny] = nearest;
             const d = Math.abs(nx - ant.x) + Math.abs(ny - ant.y);
@@ -515,6 +565,12 @@
             } else {
               moveToward(ant, nx, ny);
             }
+          } else {
+            const [qx, qy] = queenMainChamberPoint();
+            objective.stage = "return_to_main";
+            objective.returnX = qx;
+            objective.returnY = qy;
+            return;
           }
         }
 
@@ -526,8 +582,8 @@
             ant.x = dx;
             ant.y = dy;
             maybeAdvanceBuilderObjective(dx, dy);
-            if (sharedBuilderObjective?.stage === "chamber") {
-              sharedBuilderObjective.chamberPending.delete(key(dx, dy));
+            if (objective.stage === "chamber") {
+              objective.chamberPending.delete(key(dx, dy));
             }
             return;
           }
