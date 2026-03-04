@@ -247,6 +247,27 @@
         return [bestX, maxY];
       }
 
+
+      function chamberBoundsFromPending(pending, fallbackX, fallbackY) {
+        let minX = WIDTH - 1;
+        let maxX = 0;
+        let minY = HEIGHT - 1;
+        let maxY = 0;
+        let seen = false;
+
+        for (const k of pending) {
+          const [sx, sy] = k.split(',').map(Number);
+          seen = true;
+          if (sx < minX) minX = sx;
+          if (sx > maxX) maxX = sx;
+          if (sy < minY) minY = sy;
+          if (sy > maxY) maxY = sy;
+        }
+
+        if (!seen) return { left: fallbackX - 10, right: fallbackX + 10, top: fallbackY - 6, bottom: fallbackY + 6 };
+        return { left: minX, right: maxX, top: minY, bottom: maxY };
+      }
+
       function nearestPendingPixel(ant) {
         let best = null;
         let bestD = Infinity;
@@ -324,6 +345,7 @@
             const [wx, wy] = chamberBottomPoint(ant.chamberPending, ant.x, ant.y);
             ant.waitX = wx;
             ant.waitY = wy;
+            ant.chamberBounds = chamberBoundsFromPending(ant.chamberPending, ant.x, ant.y);
             ant.phase = "chamber";
           }
           return;
@@ -386,10 +408,22 @@
 
       function layEggNearQueen(queen) {
         const candidates = [];
-        for (const [nx, ny] of neighbors8(queen.x, queen.y)) {
-          if (!isEmpty(nx, ny)) continue;
-          if (eggAt(nx, ny)) continue;
-          candidates.push([nx, ny]);
+        const bounds = queen.chamberBounds || {
+          left: Math.max(0, queen.x - 10),
+          right: Math.min(WIDTH - 1, queen.x + 10),
+          top: Math.max(0, queen.y - 8),
+          bottom: Math.min(HEIGHT - 1, queen.y + 2),
+        };
+
+        for (let y = bounds.top; y <= bounds.bottom - 1; y++) {
+          for (let x = bounds.left; x <= bounds.right; x++) {
+            if (!isEmpty(x, y)) continue;
+            if (eggAt(x, y)) continue;
+            if (!inBounds(x, y + 1)) continue;
+            const supportedBelow = isSoil(x, y + 1) || eggAt(x, y + 1);
+            if (!supportedBelow) continue;
+            candidates.push([x, y]);
+          }
         }
 
         if (candidates.length === 0) return false;
@@ -421,6 +455,7 @@
           isQueen: true,
           eggsLaid: 0,
           lastEggTime: performance.now(),
+          chamberBounds: null,
         });
       }
 
