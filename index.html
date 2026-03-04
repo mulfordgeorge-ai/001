@@ -51,7 +51,7 @@
         Colony rules:
         <ul>
           <li>The first ant is the queen and builds the primary chamber.</li>
-          <li>Eggs hatch after 30–45 seconds into builder ants (20%) or worker ants (80%).</li>
+          <li>Eggs hatch after 8–10 seconds into builder ants (20%) or worker ants (80%).</li>
           <li>Builders excavate soil and pause every 3 digs until a worker collects the soil load.</li>
           <li>Workers collect builder loads, climb to the surface, then carry 30px+ left/right before dumping.</li>
           <li>Ants carrying soil are hidden while transporting it.</li>
@@ -66,8 +66,8 @@
       const DIG_INTERVAL_MS = 360; // Global dig speed.
       const SURFACE_BAND = 20;
       const SPEEDS = { play: 1, fast: 10, veryFast: 100, veryVeryFast: 1000 };
-      const EGG_HATCH_MIN_MS = 30000;
-      const EGG_HATCH_MAX_MS = 45000;
+      const EGG_HATCH_MIN_MS = 8000;
+      const EGG_HATCH_MAX_MS = 10000;
       const BUILDER_SPAWN_CHANCE = 0.2;
       const BUILDER_LOAD_DIGS = 3;
       const WORKER_DUMP_DISTANCE = 30;
@@ -77,8 +77,8 @@
         surfaceEmpty: [255, 255, 255, 255],
         excavatedEmpty: [255, 255, 255, 255],
         queen: [0, 0, 0, 255],
-        builder: [30, 30, 30, 255],
-        worker: [70, 70, 70, 255],
+        builder: [0, 0, 0, 255],
+        worker: [0, 0, 0, 255],
         egg: [185, 185, 185, 255],
       };
 
@@ -382,7 +382,7 @@
         if (ant.phase === "waiting") {
           if (ant.isQueen && ant.eggsLaid < 10) {
             const now = performance.now();
-            if (now - ant.lastEggTime >= 10000) layEggNearQueen(ant);
+            if (now - ant.lastEggTime >= 4000 + Math.random() * 2000) layEggNearQueen(ant);
           }
           return;
         }
