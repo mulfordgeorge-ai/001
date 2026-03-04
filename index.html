@@ -98,6 +98,8 @@
       const eggs = [];
       let sharedBuilderObjective = null;
       let speedMultiplier = SPEEDS.play;
+      let simulationTimeMs = 0;
+      let lastFrameRealTime = performance.now();
 
       const idx = (x, y) => y * WIDTH + x;
       const inBounds = (x, y) => x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT;
@@ -383,8 +385,7 @@
 
         if (ant.phase === "waiting") {
           if (ant.isQueen && eggs.length < 10) {
-            const now = performance.now();
-            if (now - ant.lastEggTime >= 4000 + Math.random() * 2000) layEggNearQueen(ant);
+            if (simulationTimeMs - ant.lastEggTime >= 4000 + Math.random() * 2000) layEggNearQueen(ant);
           }
           return;
         }
@@ -652,10 +653,10 @@
         eggs.push({
           x: pick[0],
           y: pick[1],
-          hatchAt: performance.now() + EGG_HATCH_MIN_MS + Math.random() * (EGG_HATCH_MAX_MS - EGG_HATCH_MIN_MS),
+          hatchAt: simulationTimeMs + EGG_HATCH_MIN_MS + Math.random() * (EGG_HATCH_MAX_MS - EGG_HATCH_MIN_MS),
         });
         queen.eggsLaid += 1;
-        queen.lastEggTime = performance.now();
+        queen.lastEggTime = simulationTimeMs;
         return true;
       }
 
@@ -802,7 +803,7 @@
           waitY: sy,
           isQueen: true,
           eggsLaid: 0,
-          lastEggTime: performance.now(),
+          lastEggTime: simulationTimeMs,
           chamberBounds: null,
           role: "queen",
           hidden: false,
@@ -824,13 +825,17 @@
         frame++;
 
         const now = performance.now();
+        const realDelta = Math.max(0, now - lastFrameRealTime);
+        lastFrameRealTime = now;
+        simulationTimeMs += realDelta * speedMultiplier;
+
         const effectiveDigInterval = Math.max(1, DIG_INTERVAL_MS / speedMultiplier);
         if (now - lastDigTime >= effectiveDigInterval) {
           lastDigTime = now;
           for (const ant of ants) updateAnt(ant);
         }
 
-        hatchEggs(now);
+        hatchEggs(simulationTimeMs);
 
         drawTerrain();
         drawEggs();
