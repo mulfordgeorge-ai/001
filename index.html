@@ -53,8 +53,8 @@
           <li>The first ant is the queen and builds the primary chamber.</li>
           <li>Eggs hatch after 8–10 seconds into builder ants (20%) or worker ants (80%).</li>
           <li>Builders share one objective: tunnel 15–25px left/right from the primary chamber, then carve a small chamber.</li>
-          <li>Workers collect builder loads, climb to the surface, then carry 30px+ left/right before dumping.</li>
-          <li>Ants carrying soil stay visible while transporting it.</li>
+          <li>Builders continuously dig toward the shared builder objective (no pickup pauses).</li>
+          <li>Workers roam tunnels and do not carry soil.</li>
         </ul>
       </div>
       <div class="meta" id="meta">Starting simulation…</div>
@@ -69,8 +69,6 @@
       const EGG_HATCH_MIN_MS = 8000;
       const EGG_HATCH_MAX_MS = 10000;
       const BUILDER_SPAWN_CHANCE = 0.2;
-      const BUILDER_LOAD_DIGS = 3;
-      const WORKER_DUMP_DISTANCE = 30;
       const WORKER_STUCK_RESET_STEPS = 24;
 
       const COLORS = {
@@ -497,30 +495,10 @@
           }
         }
       }
-
-      function nearestBuilderNeedingPickup(worker) {
-        let best = null;
-        let bestD = Infinity;
-        for (const ant of ants) {
-          if (ant.role !== "builder" || !ant.waitingForPickup) continue;
-          const d = Math.abs(ant.x - worker.x) + Math.abs(ant.y - worker.y);
-          if (d < bestD) {
-            bestD = d;
-            best = ant;
-          }
-        }
-        return best;
-      }
-
       function stepBuilderAnt(ant) {
         initSharedBuilderObjective();
-
-        if (ant.waitingForPickup) {
-          ant.hidden = false;
-          return;
-        }
-
         ant.hidden = false;
+
         let target = null;
         if (sharedBuilderObjective?.stage === "tunnel") {
           target = chooseObjectiveTunnelDigTarget(ant);
@@ -547,12 +525,6 @@
             maybeAdvanceBuilderObjective(dx, dy);
             if (sharedBuilderObjective?.stage === "chamber") {
               sharedBuilderObjective.chamberPending.delete(key(dx, dy));
-            }
-            ant.digsSinceLoad += 1;
-            if (ant.digsSinceLoad >= BUILDER_LOAD_DIGS) {
-              ant.waitingForPickup = true;
-              ant.digsSinceLoad = 0;
-              ant.hidden = false;
             }
             return;
           }
@@ -599,8 +571,6 @@
         if (ant.stuckSteps < WORKER_STUCK_RESET_STEPS) return;
 
         ant.stuckSteps = 0;
-        ant.depositDirection = Math.random() < 0.5 ? -1 : 1;
-        ant.pickupX = ant.x;
 
         let nudge = null;
         if (mode === "ascending") {
@@ -617,61 +587,10 @@
       }
 
       function stepWorkerAnt(ant) {
+        ant.hidden = false;
         let moved = false;
         const startX = ant.x;
         const startY = ant.y;
-
-        if (ant.hasLoad) {
-          ant.hidden = false;
-
-          if (!ant.depositDirection) ant.depositDirection = Math.random() < 0.5 ? -1 : 1;
-
-          const atSurface = ant.y <= Math.max(0, (surfaceDepthByX[ant.x] || SURFACE_BAND) - 1);
-          if (!atSurface) {
-            moveToward(ant, ant.x, 0);
-            moved = ant.x !== startX || ant.y !== startY;
-            trackWorkerStuck(ant, moved, "ascending");
-            return;
-          }
-
-          const horizontalFromPickup = Math.abs(ant.x - ant.pickupX);
-          if (horizontalFromPickup < WORKER_DUMP_DISTANCE) {
-            const tx = Math.max(0, Math.min(WIDTH - 1, ant.x + ant.depositDirection));
-            moveToward(ant, tx, ant.y);
-            moved = ant.x !== startX || ant.y !== startY;
-            trackWorkerStuck(ant, moved);
-            return;
-          }
-
-          ant.hasLoad = false;
-          ant.hidden = false;
-          ant.pickupX = ant.x;
-          ant.pickupY = ant.y;
-          ant.depositDirection = 0;
-          ant.stuckSteps = 0;
-          return;
-        }
-
-        ant.hidden = false;
-        const targetBuilder = nearestBuilderNeedingPickup(ant);
-        if (targetBuilder) {
-          const d = Math.abs(targetBuilder.x - ant.x) + Math.abs(targetBuilder.y - ant.y);
-          if (d <= 1) {
-            targetBuilder.waitingForPickup = false;
-            targetBuilder.hidden = false;
-            ant.hasLoad = true;
-            ant.hidden = false;
-            ant.pickupX = ant.x;
-            ant.pickupY = ant.y;
-            ant.depositDirection = Math.random() < 0.5 ? -1 : 1;
-            ant.stuckSteps = 0;
-            return;
-          }
-          moveToward(ant, targetBuilder.x, targetBuilder.y);
-          moved = ant.x !== startX || ant.y !== startY;
-          trackWorkerStuck(ant, moved);
-          return;
-        }
 
         const next = chooseMove(ant);
         if (next) {
@@ -679,7 +598,17 @@
           ant.y = next[1];
           moved = true;
         }
-        trackWorkerStuck(ant, moved);
+
+        if (!moved) {
+          const lateral = chooseLateralExitSearchMove(ant);
+          if (lateral) {
+            ant.x = lateral[0];
+            ant.y = lateral[1];
+            moved = ant.x !== startX || ant.y !== startY;
+          }
+        }
+
+        trackWorkerStuck(ant, moved, "ascending");
       }
 
       function updateColonyAnt(ant) {
@@ -755,13 +684,7 @@
           lastEggTime: 0,
           chamberBounds: null,
           role,
-          digsSinceLoad: 0,
-          waitingForPickup: false,
-          hasLoad: false,
           hidden: false,
-          pickupX: x,
-          pickupY: y,
-          depositDirection: 0,
           stuckSteps: 0,
           lastX: x,
           lastY: y,
@@ -791,13 +714,7 @@
           lastEggTime: performance.now(),
           chamberBounds: null,
           role: "queen",
-          digsSinceLoad: 0,
-          waitingForPickup: false,
-          hasLoad: false,
           hidden: false,
-          pickupX: sx,
-          pickupY: sy,
-          depositDirection: 0,
           stuckSteps: 0,
           lastX: sx,
           lastY: sy,
@@ -836,16 +753,14 @@
         const eggsLaid = queen ? queen.eggsLaid : 0;
         let builders = 0;
         let workers = 0;
-        let waitingBuilders = 0;
         for (const ant of ants) {
           if (ant.role === "builder") {
             builders++;
-            if (ant.waitingForPickup) waitingBuilders++;
           }
           if (ant.role === "worker") workers++;
         }
         const buildStage = sharedBuilderObjective ? sharedBuilderObjective.stage : "none";
-        meta.textContent = `frame=${frame} queenPhase=${phase} buildStage=${buildStage} primaryChamberPending=${chamberPending} eggs=${eggsLaid}/10 liveEggs=${eggs.length} builders=${builders} workers=${workers} waitingLoads=${waitingBuilders} empty=${empty} speed=${speedMultiplier}x`;
+        meta.textContent = `frame=${frame} queenPhase=${phase} buildStage=${buildStage} primaryChamberPending=${chamberPending} eggs=${eggsLaid}/10 liveEggs=${eggs.length} builders=${builders} workers=${workers} empty=${empty} speed=${speedMultiplier}x`;
 
         requestAnimationFrame(tick);
       }
