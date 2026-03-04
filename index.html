@@ -45,6 +45,7 @@
         <button id="speed-fast" type="button">Fast</button>
         <button id="speed-very-fast" type="button">Very fast</button>
         <button id="speed-very-very-fast" type="button">Very very fast</button>
+        <button id="copy-bmp" type="button">Copy BMP (4-bit gray)</button>
       </div>
       <canvas id="world" width="400" height="300"></canvas>
       <div class="rules">
@@ -87,6 +88,7 @@
       const speedFastButton = document.getElementById("speed-fast");
       const speedVeryFastButton = document.getElementById("speed-very-fast");
       const speedVeryVeryFastButton = document.getElementById("speed-very-very-fast");
+      const copyBmpButton = document.getElementById("copy-bmp");
       const ctx = canvas.getContext("2d", { alpha: false });
       const image = ctx.createImageData(WIDTH, HEIGHT);
 
@@ -691,6 +693,95 @@
         });
       }
 
+
+      function create4BitGrayscaleBmpBlob() {
+        const capture = ctx.getImageData(0, 0, WIDTH, HEIGHT);
+        const pixels = capture.data;
+
+        const rowBytesUnpadded = Math.ceil(WIDTH / 2);
+        const rowStride = (rowBytesUnpadded + 3) & ~3;
+        const paletteSize = 16 * 4;
+        const fileHeaderSize = 14;
+        const dibHeaderSize = 40;
+        const pixelDataSize = rowStride * HEIGHT;
+        const pixelOffset = fileHeaderSize + dibHeaderSize + paletteSize;
+        const fileSize = pixelOffset + pixelDataSize;
+
+        const out = new Uint8Array(fileSize);
+        const view = new DataView(out.buffer);
+
+        // BITMAPFILEHEADER
+        out[0] = 0x42; // B
+        out[1] = 0x4D; // M
+        view.setUint32(2, fileSize, true);
+        view.setUint32(10, pixelOffset, true);
+
+        // BITMAPINFOHEADER
+        view.setUint32(14, dibHeaderSize, true);
+        view.setInt32(18, WIDTH, true);
+        view.setInt32(22, HEIGHT, true); // bottom-up
+        view.setUint16(26, 1, true); // planes
+        view.setUint16(28, 4, true); // 4bpp indexed
+        view.setUint32(30, 0, true); // BI_RGB
+        view.setUint32(34, pixelDataSize, true);
+        view.setInt32(38, 2835, true); // 72 DPI
+        view.setInt32(42, 2835, true); // 72 DPI
+        view.setUint32(46, 16, true); // colors used
+        view.setUint32(50, 16, true); // important colors
+
+        // 16-level grayscale palette (BGRA entries)
+        let paletteOffset = fileHeaderSize + dibHeaderSize;
+        for (let i = 0; i < 16; i++) {
+          const gray = Math.round((i / 15) * 255);
+          out[paletteOffset++] = gray; // B
+          out[paletteOffset++] = gray; // G
+          out[paletteOffset++] = gray; // R
+          out[paletteOffset++] = 0;
+        }
+
+        // Pixel indices, packed two 4-bit pixels per byte. Bottom-up rows.
+        let dst = pixelOffset;
+        for (let y = HEIGHT - 1; y >= 0; y--) {
+          let x = 0;
+          while (x < WIDTH) {
+            const p0 = (y * WIDTH + x) * 4;
+            const g0 = Math.round((pixels[p0] + pixels[p0 + 1] + pixels[p0 + 2]) / 3);
+            const i0 = Math.max(0, Math.min(15, Math.round((g0 / 255) * 15)));
+
+            let i1 = 0;
+            if (x + 1 < WIDTH) {
+              const p1 = (y * WIDTH + x + 1) * 4;
+              const g1 = Math.round((pixels[p1] + pixels[p1 + 1] + pixels[p1 + 2]) / 3);
+              i1 = Math.max(0, Math.min(15, Math.round((g1 / 255) * 15)));
+            }
+
+            out[dst++] = (i0 << 4) | i1;
+            x += 2;
+          }
+
+          const written = rowBytesUnpadded;
+          const pad = rowStride - written;
+          for (let i = 0; i < pad; i++) out[dst++] = 0;
+        }
+
+        return new Blob([out], { type: "image/bmp" });
+      }
+
+      async function copyBmpToClipboard() {
+        try {
+          if (!navigator.clipboard || !window.ClipboardItem) {
+            meta.textContent = "Clipboard BMP copy unsupported in this browser.";
+            return;
+          }
+
+          const bmpBlob = create4BitGrayscaleBmpBlob();
+          await navigator.clipboard.write([new ClipboardItem({ "image/bmp": bmpBlob })]);
+          meta.textContent = "Copied 4-bit grayscale BMP to clipboard.";
+        } catch (err) {
+          meta.textContent = `BMP clipboard copy failed: ${err?.message || err}`;
+        }
+      }
+
       function setSpeed(mode) {
         speedMultiplier = SPEEDS[mode] ?? SPEEDS.play;
       }
@@ -725,6 +816,7 @@
       speedFastButton.addEventListener("click", () => setSpeed("fast"));
       speedVeryFastButton.addEventListener("click", () => setSpeed("veryFast"));
       speedVeryVeryFastButton.addEventListener("click", () => setSpeed("veryVeryFast"));
+      copyBmpButton.addEventListener("click", () => copyBmpToClipboard());
 
       let frame = 0;
       let lastDigTime = 0;
