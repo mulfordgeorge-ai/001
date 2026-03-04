@@ -190,18 +190,21 @@
       function buildMainChamberPixels(cx, cy) {
         const pending = new Set();
         const halfWidth = 10; // ~20px wide chamber
-        const chamberHeight = 12 + Math.floor(Math.random() * 7); // randomized height 12..18
-        const bottomY = cy + Math.floor(chamberHeight / 2);
+        const chamberWidth = halfWidth * 2;
+        const chamberHeight = Math.round(chamberWidth * (0.3 + Math.random() * 0.3)); // 0.3..0.6 width
+        const baseSag = 1 + Math.floor(Math.random() * 3); // 1..3px downward curve
+        const baseY = cy + Math.floor(chamberHeight / 2);
 
         for (let x = cx - halfWidth - 1; x <= cx + halfWidth + 1; x++) {
           if (x < 0 || x >= WIDTH) continue;
           const nx = Math.max(-1, Math.min(1, (x - cx) / halfWidth));
           const arch = Math.sqrt(Math.max(0, 1 - nx * nx));
           const roofNoise = Math.floor((Math.random() - 0.5) * 3); // slight irregularity
-          let topY = Math.round(bottomY - chamberHeight * arch) + roofNoise;
-          topY = Math.min(topY, bottomY - 2);
+          const columnBottom = baseY + Math.round(baseSag * (1 - Math.abs(nx)));
+          let topY = Math.round(baseY - chamberHeight * arch) + roofNoise;
+          topY = Math.min(topY, columnBottom - 2);
 
-          for (let y = topY; y <= bottomY; y++) {
+          for (let y = topY; y <= columnBottom; y++) {
             if (!inBounds(x, y)) continue;
             pending.add(key(x, y));
           }
