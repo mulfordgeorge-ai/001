@@ -79,21 +79,12 @@
       surface[x] = SKY_HEIGHT + noise;
     }
 
-    // Fill frame: sky is white; everything below noisy surface is light-grey soil.
+    // Fill frame: sky is white; everything below noisy surface is solid dark-grey soil.
     for (let y = 0; y < HEIGHT; y++) {
       for (let x = 0; x < WIDTH; x++) {
         if (y < surface[x]) {
           setPixel(x, y, COLORS.WHITE);
         } else {
-          setPixel(x, y, COLORS.LIGHT_GREY);
-        }
-      }
-    }
-
-    // Add sparse dark-grey mineral flecks in soil.
-    for (let y = SKY_HEIGHT + 1; y < HEIGHT; y++) {
-      for (let x = 0; x < WIDTH; x++) {
-        if (y >= surface[x] && rng() < 0.012) {
           setPixel(x, y, COLORS.DARK_GREY);
         }
       }
