@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Procedural Ant Nest</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    background: #000;
+    color: #fff;
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  }
+  .wrap { display: grid; gap: 10px; justify-items: center; }
+  canvas {
+    width: 400px;
+    height: 300px;
+    image-rendering: pixelated;
+    border: 1px solid #fff;
+    background: #000;
+  }
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    user-select: none;
+  }
+  button, input[type="range"] {
+    accent-color: #fff;
+    background: #000;
+    color: #fff;
+  }
+  button {
+    border: 1px solid #fff;
+    padding: 3px 8px;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <canvas id="nest" width="400" height="300" aria-label="Procedural ant nest"></canvas>
+    <div class="controls">
+      <button id="toggle">Pause</button>
+      <label>Speed <input id="speed" type="range" min="0" max="2" step="0.01" value="1" /></label>
+      <span id="speedLabel">1.00x</span>
+    </div>
+  </div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('nest');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width;
+  const H = canvas.height;
+
+  function mulberry32(seed) {
+    return function() {
+      let t = (seed += 0x6D2B79F5);
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  const rng = mulberry32(20260308);
+  const rand = (a = 1, b = 0) => b + rng() * (a - b);
+  const rint = (a, b) => Math.floor(rand(b + 1, a));
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const lerp = (a, b, t) => a + (b - a) * t;
+
+  function dist(a, b) {
+    const dx = a.x - b.x;
+    const dy = a.y - b.y;
+    return Math.hypot(dx, dy);
+  }
+
+  function polylineLength(points) {
+    let len = 0;
+    for (let i = 1; i < points.length; i++) len += dist(points[i - 1], points[i]);
+    return len;
+  }
+
+  function pointAt(points, t) {
+    const total = polylineLength(points);
+    const target = total * clamp(t, 0, 1);
+    let acc = 0;
+    for (let i = 1; i < points.length; i++) {
+      const seg = dist(points[i - 1], points[i]);
+      if (acc + seg >= target) {
+        const p = (target - acc) / Math.max(seg, 1e-6);
+        return {
+          x: lerp(points[i - 1].x, points[i].x, p),
+          y: lerp(points[i - 1].y, points[i].y, p)
+        };
+      }
+      acc += seg;
+    }
+    return points[points.length - 1];
+  }
+
+  function noisyStroke(points, width, reveal) {
+    const total = polylineLength(points);
+    const cap = total * clamp(reveal, 0, 1);
+    let acc = 0;
+    ctx.beginPath();
+    ctx.lineWidth = width;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#fff';
+    ctx.moveTo(points[0].x, points[0].y);
+
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1];
+      const b = points[i];
+      const seg = dist(a, b);
+      if (acc >= cap) break;
+      const useSeg = Math.min(seg, cap - acc);
+      const t = clamp(useSeg / Math.max(seg, 1e-6), 0, 1);
+      const ex = lerp(a.x, b.x, t);
+      const ey = lerp(a.y, b.y, t);
+      ctx.lineTo(ex, ey);
+      acc += useSeg;
+      if (useSeg < seg) break;
+    }
+
+    ctx.stroke();
+  }
+
+  function drawChamber(ch, reveal) {
+    const rr = clamp(reveal, 0, 1);
+    if (rr <= 0) return;
+    const rx = ch.rx * (0.2 + 0.8 * rr);
+    const ry = ch.ry * (0.2 + 0.8 * rr);
+    const pts = ch.points;
+
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i];
+      const x = ch.x + p.nx * rx;
+      const y = ch.y + p.ny * ry;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function buildPath(start, endY, drift, maxStep = 8) {
+    const pts = [{ x: start.x, y: start.y }];
+    let x = start.x;
+    let y = start.y;
+    let vx = rand(0.25, -0.25);
+
+    while (y < endY) {
+      const dy = rand(maxStep, maxStep * 0.65);
+      vx += rand(0.4, -0.4) + drift * 0.03;
+      vx *= 0.8;
+      x += vx + rand(0.7, -0.7);
+      y += dy;
+      x = clamp(x, 26, W - 26);
+      pts.push({ x, y });
+    }
+    return pts;
+  }
+
+  const tunnels = [];
+  const chambers = [];
+  const taken = [];
+
+  function tryPlaceChamber(anchor, roleHint, axis = 1) {
+    const d = anchor.y / H;
+    const upperBias = 1 - d;
+    let rx = 0;
+    let ry = 0;
+
+    if (roleHint === 'queen') {
+      rx = rand(17, 13);
+      ry = rand(11, 8);
+    } else if (d < 0.45) {
+      rx = rand(13 + upperBias * 4, 9);
+      ry = rand(8 + upperBias * 3, 6);
+    } else if (d < 0.75) {
+      rx = rand(12, 8);
+      ry = rand(8, 5);
+    } else {
+      rx = rand(9, 6);
+      ry = rand(6, 4);
+    }
+
+    const cx = clamp(anchor.x + rand(14, -14) * axis, 26 + rx, W - 26 - rx);
+    const cy = clamp(anchor.y + rand(8, -8), 28 + ry, H - 18 - ry);
+
+    for (const c of taken) {
+      const ox = Math.abs(cx - c.x) / (rx + c.rx);
+      const oy = Math.abs(cy - c.y) / (ry + c.ry);
+      if (ox * ox + oy * oy < 0.92) return null;
+    }
+
+    const role = roleHint || (d < 0.45 ? 'brood' : d < 0.75 ? 'storage' : 'worker');
+    const points = [];
+    const count = 26;
+    for (let i = 0; i < count; i++) {
+      const a = (Math.PI * 2 * i) / count;
+      const jitter = 1 + rand(0.1, -0.1);
+      points.push({ nx: Math.cos(a) * jitter, ny: Math.sin(a) * jitter });
+    }
+
+    const chamber = { x: cx, y: cy, rx, ry, role, depth: d, points, anchor };
+    taken.push(chamber);
+    return chamber;
+  }
+
+  const shaftCount = rint(1, 3);
+  const center = W * 0.5;
+  const spread = shaftCount === 1 ? 0 : shaftCount === 2 ? 42 : 62;
+
+  for (let i = 0; i < shaftCount; i++) {
+    const t = shaftCount === 1 ? 0.5 : i / (shaftCount - 1);
+    const ex = center + lerp(-spread, spread, t) + rand(8, -8);
+    const start = { x: clamp(ex, 40, W - 40), y: 16 };
+    const endY = rand(H - 40, H - 92);
+    const shaft = buildPath(start, endY, rand(0.2, -0.2), 7.2);
+    tunnels.push({ points: shaft, width: rand(5.2, 4.1), type: 'shaft', depth: endY / H });
+
+    const branchN = rint(2, 4);
+    for (let b = 0; b < branchN; b++) {
+      const bt = rand(0.86, 0.2);
+      const p = pointAt(shaft, bt);
+      const dir = rand() < 0.5 ? -1 : 1;
+      const len = rand(56, 26) * (1 - bt * 0.45);
+      const target = {
+        x: clamp(p.x + dir * len, 24, W - 24),
+        y: clamp(p.y + rand(16, -14), 26, H - 18)
+      };
+      const branch = [{ x: p.x, y: p.y }];
+      let x = p.x, y = p.y;
+      let vx = dir * rand(2.1, 0.8);
+      const steps = rint(7, 13);
+      for (let s = 0; s < steps; s++) {
+        const tt = (s + 1) / steps;
+        vx += rand(0.45, -0.45);
+        x = lerp(x + vx, target.x, 0.24 * tt) + rand(0.5, -0.5);
+        y = lerp(y + rand(2.2, -2.2), target.y, 0.2 * tt);
+        x = clamp(x, 18, W - 18);
+        y = clamp(y, 22, H - 14);
+        branch.push({ x, y });
+      }
+      tunnels.push({ points: branch, width: rand(4.6, 3.2), type: 'branch', depth: p.y / H });
+
+      const chamber = tryPlaceChamber(branch[branch.length - 1], null, dir);
+      if (chamber) chambers.push(chamber);
+    }
+
+    const along = rint(1, 2);
+    for (let c = 0; c < along; c++) {
+      const ct = rand(0.68, 0.22);
+      const p = pointAt(shaft, ct);
+      const chamber = tryPlaceChamber(p, ct < 0.45 ? 'brood' : null, rand() < 0.5 ? -1 : 1);
+      if (chamber) chambers.push(chamber);
+    }
+  }
+
+  let deepest = tunnels[0].points[tunnels[0].points.length - 1];
+  for (const t of tunnels) {
+    const last = t.points[t.points.length - 1];
+    if (last.y > deepest.y) deepest = last;
+  }
+
+  const queenChamber = tryPlaceChamber({ x: deepest.x, y: Math.min(H - 26, deepest.y + 8) }, 'queen', rand() < 0.5 ? -1 : 1);
+  if (queenChamber) {
+    queenChamber.role = 'queen';
+    chambers.push(queenChamber);
+    tunnels.push({
+      points: [deepest, { x: lerp(deepest.x, queenChamber.x, 0.5), y: lerp(deepest.y, queenChamber.y, 0.7) }, { x: queenChamber.x, y: queenChamber.y }],
+      width: 3.4,
+      type: 'connector',
+      depth: queenChamber.depth
+    });
+  }
+
+  chambers.sort((a, b) => a.depth - b.depth);
+  tunnels.sort((a, b) => a.depth - b.depth);
+
+  const events = [];
+  let clock = 0;
+  for (const t of tunnels) {
+    const dur = 420 + polylineLength(t.points) * 8;
+    events.push({ kind: 'tunnel', ref: t, start: clock, duration: dur });
+    clock += dur * 0.42;
+  }
+  for (const c of chambers) {
+    const dur = 360 + (c.rx + c.ry) * 14;
+    events.push({ kind: 'chamber', ref: c, start: clock, duration: dur });
+    clock += dur * 0.34;
+  }
+  const totalDuration = clock + 500;
+
+  let simTime = 0;
+  let speed = 1;
+  let playing = true;
+  let prev = performance.now();
+
+  const toggle = document.getElementById('toggle');
+  const speedInput = document.getElementById('speed');
+  const speedLabel = document.getElementById('speedLabel');
+
+  toggle.addEventListener('click', () => {
+    playing = !playing;
+    toggle.textContent = playing ? 'Pause' : 'Play';
+  });
+  speedInput.addEventListener('input', () => {
+    speed = Number(speedInput.value);
+    speedLabel.textContent = `${speed.toFixed(2)}x`;
+  });
+
+  function render(now) {
+    const dt = now - prev;
+    prev = now;
+    if (playing) {
+      simTime += dt * speed;
+      if (simTime > totalDuration) simTime = totalDuration;
+    }
+
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, W, H);
+
+    for (const e of events) {
+      const p = clamp((simTime - e.start) / e.duration, 0, 1);
+      if (p <= 0) continue;
+      if (e.kind === 'tunnel') noisyStroke(e.ref.points, e.ref.width, p);
+      else drawChamber(e.ref, p);
+    }
+
+    requestAnimationFrame(render);
+  }
+
+  requestAnimationFrame(render);
+})();
+</script>
+</body>
+</html>
