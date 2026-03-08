@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ant Formicarium (400x300)</title>
+  <style>
+    :root {
+      --black: rgb(0, 0, 0);
+      --dark-grey: rgb(85, 85, 85);
+      --light-grey: rgb(170, 170, 170);
+      --white: rgb(255, 255, 255);
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: var(--dark-grey);
+      font-family: system-ui, sans-serif;
+    }
+
+    canvas {
+      width: 400px;
+      height: 300px;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      border: 2px solid var(--white);
+      background: var(--white);
+    }
+  </style>
+</head>
+<body>
+  <canvas id="formicarium" width="400" height="300" aria-label="Ant formicarium"></canvas>
+
+  <script>
+    const WIDTH = 400;
+    const HEIGHT = 300;
+    const SKY_HEIGHT = 10;
+
+    const COLORS = {
+      BLACK: [0, 0, 0, 255],
+      DARK_GREY: [85, 85, 85, 255],
+      LIGHT_GREY: [170, 170, 170, 255],
+      WHITE: [255, 255, 255, 255],
+    };
+
+    // Simple deterministic pseudo-random generator so the scene is reproducible.
+    function mulberry32(seed) {
+      return function () {
+        let t = (seed += 0x6d2b79f5);
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    const rng = mulberry32(42);
+
+    const canvas = document.getElementById('formicarium');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const img = ctx.createImageData(WIDTH, HEIGHT);
+    const data = img.data;
+
+    function setPixel(x, y, color) {
+      if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT) return;
+      const i = (y * WIDTH + x) * 4;
+      data[i] = color[0];
+      data[i + 1] = color[1];
+      data[i + 2] = color[2];
+      data[i + 3] = color[3];
+    }
+
+    // Build a noisy soil surface: baseline at y=10 with +1 to +3 px variation.
+    const surface = new Array(WIDTH);
+    for (let x = 0; x < WIDTH; x++) {
+      const noise = 1 + Math.floor(rng() * 3); // 1..3
+      surface[x] = SKY_HEIGHT + noise;
+    }
+
+    // Fill frame: sky is white; everything below noisy surface is light-grey soil.
+    for (let y = 0; y < HEIGHT; y++) {
+      for (let x = 0; x < WIDTH; x++) {
+        if (y < surface[x]) {
+          setPixel(x, y, COLORS.WHITE);
+        } else {
+          setPixel(x, y, COLORS.LIGHT_GREY);
+        }
+      }
+    }
+
+    // Add sparse dark-grey mineral flecks in soil.
+    for (let y = SKY_HEIGHT + 1; y < HEIGHT; y++) {
+      for (let x = 0; x < WIDTH; x++) {
+        if (y >= surface[x] && rng() < 0.012) {
+          setPixel(x, y, COLORS.DARK_GREY);
+        }
+      }
+    }
+
+    // Draw black ants, each ant is exactly 2 pixels.
+    const ANT_COUNT = 45;
+    for (let i = 0; i < ANT_COUNT; i++) {
+      const x = Math.floor(rng() * (WIDTH - 1));
+      const y = Math.floor(SKY_HEIGHT + 6 + rng() * (HEIGHT - SKY_HEIGHT - 6));
+      const horizontal = rng() < 0.5;
+
+      if (y >= surface[x]) {
+        setPixel(x, y, COLORS.BLACK);
+        if (horizontal) {
+          setPixel(x + 1, y, COLORS.BLACK);
+        } else {
+          setPixel(x, y + 1, COLORS.BLACK);
+        }
+      }
+    }
+
+    ctx.putImageData(img, 0, 0);
+  </script>
+</body>
+</html>
